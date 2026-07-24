@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Activity Checker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --background:#ffffff; --foreground:#0a0a0a;
+  --card:#ffffff; --muted:#f5f5f5; --muted-foreground:#737373;
+  --primary:#165dfc; --primary-foreground:#ffffff;
+  --border:#e5e5e5; --input-bg:rgba(255,255,255,.8);
+  --destructive:#df2225; --success:#0d9455;
+  --badge-buy-bg:#e8f7ef; --badge-buy-fg:#0d9455;
+  --badge-sell-bg:#fdecec; --badge-sell-fg:#df2225;
+  --badge-neutral-bg:#f4f4f5; --badge-neutral-fg:#52525b;
+  --json-key:#165dfc; --json-str:#0d9455; --json-num:#b45309; --json-bool:#7c3aed; --json-null:#737373;
+}
+.dark{
+  --background:#0a0b0d; --foreground:#fafafa;
+  --card:#111214; --muted:#18191c; --muted-foreground:#8b8d96;
+  --primary:#165dfc; --primary-foreground:#ffffff;
+  --border:#1f2023; --input-bg:rgba(17,18,20,.8);
+  --destructive:#ff6568; --success:#34d399;
+  --badge-buy-bg:rgba(13,148,85,.16); --badge-buy-fg:#34d399;
+  --badge-sell-bg:rgba(223,34,37,.16); --badge-sell-fg:#ff6568;
+  --badge-neutral-bg:#1f2023; --badge-neutral-fg:#a1a1aa;
+  --json-key:#7aa5ff; --json-str:#4ade80; --json-num:#fbbf24; --json-bool:#c4b5fd; --json-null:#8b8d96;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{
+  font-family:'Geist',ui-sans-serif,system-ui,sans-serif;
+  background:var(--background); color:var(--foreground);
+  -webkit-font-smoothing:antialiased;
+  transition:background .2s,color .2s;
+}
+.mono{font-family:'Geist Mono',ui-monospace,monospace;}
+.page{position:relative; min-height:100svh; overflow-x:hidden; padding:48px 16px 80px; display:flex; flex-direction:column; align-items:center;}
+.deco{pointer-events:none; position:absolute; top:-10px; right:-30px; width:150px; height:150px; transform:rotate(-20deg); opacity:.9;}
+.deco path{stroke:var(--foreground); stroke-width:3; fill:none; opacity:.15;}
+.wrap{position:relative; width:100%; max-width:67rem; display:flex; flex-direction:column; gap:16px;}
+
+/* header */
+.header{display:flex; align-items:flex-start; justify-content:space-between; gap:12px;}
+h1{font-size:16px; font-weight:600; letter-spacing:-.01em;}
+.sub{font-size:13px; color:var(--muted-foreground); margin-top:2px;}
+.icon-btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:32px; height:32px; border:1px solid var(--border); background:transparent;
+  color:var(--foreground); cursor:pointer; transition:background .15s;
+}
+.icon-btn:hover{background:var(--muted);}
+.icon-btn svg{width:15px; height:15px;}
+
+/* input card */
+.card{border:1px solid var(--border); background:var(--card);}
+textarea{
+  display:block; width:100%; min-height:96px; resize:vertical;
+  border:none; outline:none; background:var(--input-bg); color:var(--foreground);
+  font-family:'Geist Mono',ui-monospace,monospace; font-size:13px; line-height:1.6;
+  padding:12px;
+}
+textarea::placeholder{color:var(--muted-foreground);}
+textarea:focus-visible{box-shadow:inset 0 0 0 1px var(--primary);}
+.toolbar{
+  display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
+  border-top:1px solid var(--border); background:var(--input-bg); padding:8px;
+}
+.toolbar-left{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+select,.btn{
+  height:32px; font-family:inherit; font-size:13px; border:1px solid var(--border);
+  background:var(--card); color:var(--foreground); padding:0 10px; cursor:pointer;
+}
+select:focus-visible,.btn:focus-visible,textarea:focus-visible,.tab:focus-visible{outline:2px solid var(--primary); outline-offset:1px;}
+.btn-primary{background:var(--primary); color:var(--primary-foreground); border-color:var(--primary); font-weight:500; padding:0 16px;}
+.btn-primary:hover{filter:brightness(1.08);}
+.btn:disabled{opacity:.5; cursor:not-allowed;}
+.hint{font-size:12px; color:var(--muted-foreground);}
+.error{font-size:13px; color:var(--destructive);}
+
+/* progress */
+.progress{display:none; font-size:13px; color:var(--muted-foreground); align-items:center; gap:8px;}
+.progress.active{display:flex;}
+.spinner{width:13px; height:13px; border:2px solid var(--border); border-top-color:var(--primary); border-radius:50%; animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none;}}
+
+/* summary */
+.summary{display:none; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); border:1px solid var(--border);}
+.summary.active{display:grid;}
+.stat{padding:12px 14px; border-right:1px solid var(--border);}
+.stat:last-child{border-right:none;}
+.stat .label{font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted-foreground);}
+.stat .value{font-size:18px; font-weight:600; margin-top:2px; font-variant-numeric:tabular-nums;}
+
+/* results header */
+.results-bar{display:none; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;}
+.results-bar.active{display:flex;}
+.tabs{display:flex; border:1px solid var(--border);}
+.tab{
+  height:30px; padding:0 14px; font-size:13px; font-family:inherit; border:none; cursor:pointer;
+  background:transparent; color:var(--muted-foreground);
+}
+.tab.on{background:var(--primary); color:var(--primary-foreground);}
+.results-actions{display:flex; gap:8px; flex-wrap:wrap;}
+input[type="search"]{
+  height:30px; border:1px solid var(--border); background:var(--card); color:var(--foreground);
+  font-family:inherit; font-size:13px; padding:0 10px; width:200px;
+}
+
+/* table */
+.table-wrap{display:none; border:1px solid var(--border); overflow-x:auto;}
+.table-wrap.active{display:block;}
+table{width:100%; border-collapse:collapse; font-size:13px;}
+th{
+  text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:500;
+  color:var(--muted-foreground); padding:8px 12px; border-bottom:1px solid var(--border);
+  background:var(--muted); white-space:nowrap; position:sticky; top:0;
+}
+td{padding:8px 12px; border-bottom:1px solid var(--border); vertical-align:middle; white-space:nowrap;}
+tr:last-child td{border-bottom:none;}
+tbody tr:hover{background:var(--muted);}
+td.num{font-variant-numeric:tabular-nums; text-align:right;}
+th.num{text-align:right;}
+.market-cell{display:flex; align-items:center; gap:8px; max-width:420px; cursor:help;}
+.market-cell img{width:22px; height:22px; object-fit:cover; flex-shrink:0;}
+.market-cell a{color:var(--foreground); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.market-cell a:hover{color:var(--primary); text-decoration:underline;}
+
+/* floating tooltip */
+#tooltip{
+  position:fixed; z-index:1000; display:none; max-width:380px;
+  border:1px solid var(--border); background:var(--card); color:var(--foreground);
+  box-shadow:0 8px 24px rgba(0,0,0,.18); font-size:12.5px; line-height:1.5;
+  padding:10px 12px; pointer-events:none;
+}
+#tooltip .tt-title{font-weight:600; margin-bottom:2px; white-space:normal;}
+#tooltip ul.tt-list{margin:4px 0 0; padding-left:16px; list-style:disc;}
+#tooltip ul.tt-list li{margin:3px 0; white-space:normal;}
+#tooltip ul.tt-list li::marker{color:var(--muted-foreground);}
+#tooltip .tt-sub{color:var(--muted-foreground); margin-bottom:4px;}
+#tooltip .tt-legs{margin-top:6px; border-top:1px solid var(--border); padding-top:6px; display:flex; flex-direction:column; gap:5px;}
+#tooltip .tt-leg{display:flex; gap:6px; align-items:baseline; white-space:normal;}
+#tooltip .tt-leg .n{color:var(--muted-foreground); font-size:11px; flex-shrink:0;}
+#tooltip .tt-leg .badge{flex-shrink:0;}
+#tooltip .tt-meta{color:var(--muted-foreground); font-size:11px;}
+#tooltip .badge.won{background:var(--badge-buy-bg); color:var(--badge-buy-fg);}
+#tooltip .badge.lost{background:var(--badge-sell-bg); color:var(--badge-sell-fg);}
+.badge{display:inline-block; font-size:11px; font-weight:500; padding:2px 8px; letter-spacing:.02em;}
+.badge.buy{background:var(--badge-buy-bg); color:var(--badge-buy-fg);}
+.badge.sell{background:var(--badge-sell-bg); color:var(--badge-sell-fg);}
+.badge.neutral{background:var(--badge-neutral-bg); color:var(--badge-neutral-fg);}
+.badge.combo{background:rgba(22,93,252,.12); color:var(--primary);}
+.addr-link,.tx-link{color:var(--muted-foreground); text-decoration:none; font-size:12px;}
+.addr-link:hover,.tx-link:hover{color:var(--primary);}
+.time-cell{color:var(--muted-foreground); font-size:12px;}
+.outcome{color:var(--muted-foreground); font-size:12px;}
+
+/* json view */
+.json-wrap{display:none; border:1px solid var(--border); background:var(--card); max-height:70vh; overflow:auto;}
+.json-wrap.active{display:block;}
+.json-wrap pre{font-family:'Geist Mono',ui-monospace,monospace; font-size:12px; line-height:1.55; padding:16px; white-space:pre;}
+.jk{color:var(--json-key);} .js{color:var(--json-str);} .jn{color:var(--json-num);} .jb{color:var(--json-bool);} .jz{color:var(--json-null);}
+.json-note{font-size:12px; color:var(--muted-foreground); padding:8px 16px; border-bottom:1px solid var(--border); background:var(--muted);}
+
+.load-more-row{display:none; justify-content:center; padding:12px;}
+.load-more-row.active{display:flex;}
+.empty{display:none; border:1px dashed var(--border); padding:40px; text-align:center; color:var(--muted-foreground); font-size:13px;}
+.empty.active{display:block;}
+footer{margin-top:8px; font-size:12px; color:var(--muted-foreground);}
+footer a{color:inherit;}
+@media (max-width:640px){ .stat .value{font-size:15px;} input[type="search"]{width:130px;} }
+</style>
+</head>
+<body>
+<div class="page">
+  <svg class="deco" viewBox="0 0 100 100" aria-hidden="true">
+    <path d="M20 80 L50 20 L80 80 Z M35 65 L65 65"/>
+  </svg>
+
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h1>Polymarket Activity Checker</h1>
+        <p class="sub">Paste one or more addresses, separated by commas or new lines.</p>
+      </div>
+      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
+        <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg id="iconSun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </button>
+    </div>
+
+    <div class="card">
+      <textarea id="addrInput" placeholder="0x..." spellcheck="false"></textarea>
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <select id="typeSel" aria-label="Activity type">
+            <option value="">All types</option>
+            <option value="TRADE">Trade</option>
+            <option value="SPLIT">Split</option>
+            <option value="MERGE">Merge</option>
+            <option value="REDEEM">Redeem</option>
+            <option value="REWARD">Reward</option>
+            <option value="CONVERSION">Conversion</option>
+          </select>
+          <select id="sideSel" aria-label="Side">
+            <option value="">All sides</option>
+            <option value="BUY">Buy</option>
+            <option value="SELL">Sell</option>
+          </select>
+          <select id="comboSel" aria-label="Combo filter">
+            <option value="">All predictions</option>
+            <option value="single">Only single prediction</option>
+            <option value="combo">Only combo</option>
+          </select>
+          <select id="timeSel" aria-label="Time range">
+            <option value="">All time</option>
+            <option value="86400">Last 24 hours</option>
+            <option value="604800">Last 7 days</option>
+            <option value="2592000">Last 30 days</option>
+            <option value="7776000">Last 90 days</option>
+          </select>
+          <span class="hint">Fetched in pages of 500 via <span class="mono">limit=500&amp;offset=N</span></span>
+        </div>
+        <button class="btn btn-primary" id="submitBtn">Check activity</button>
+      </div>
+    </div>
+
+    <div class="error" id="errorBox" role="alert"></div>
+    <div class="progress" id="progressBox"><span class="spinner"></span><span id="progressText">Fetching…</span></div>
+
+    <div class="summary" id="summaryBox">
+      <div class="stat"><div class="label">Records</div><div class="value" id="stRecords">–</div></div>
+      <div class="stat"><div class="label">Volume (USDC)</div><div class="value" id="stVolume">–</div></div>
+      <div class="stat"><div class="label">Buys</div><div class="value" id="stBuys">–</div></div>
+      <div class="stat"><div class="label">Sells</div><div class="value" id="stSells">–</div></div>
+      <div class="stat"><div class="label">Markets</div><div class="value" id="stMarkets">–</div></div>
+      <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
+      <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
+    </div>
+
+    <div class="results-bar" id="resultsBar">
+      <div class="tabs" role="tablist">
+        <button class="tab on" id="tabTable" role="tab">Table</button>
+        <button class="tab" id="tabJson" role="tab">JSON</button>
+      </div>
+      <div class="results-actions">
+        <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
+        <button class="btn" id="dlJson">Download JSON</button>
+        <button class="btn" id="dlCsv">Download CSV</button>
+      </div>
+    </div>
+
+    <div class="table-wrap" id="tableWrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>Wallet</th><th>Type</th><th>Market</th><th>Outcome</th>
+            <th>Side</th><th class="num">Size</th><th class="num">Price</th><th class="num">USDC</th><th>Tx</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div class="load-more-row" id="loadMoreRow"><button class="btn" id="loadMoreBtn">Show more rows</button></div>
+    </div>
+
+    <div class="json-wrap" id="jsonWrap">
+      <div class="json-note" id="jsonNote"></div>
+      <pre id="jsonPre"></pre>
+    </div>
+
+    <div class="empty" id="emptyBox">No activity found for the selected filters.</div>
+
+    <footer>Data from <a href="https://data-api.polymarket.com" target="_blank" rel="noopener">data-api.polymarket.com</a> · paginated automatically at the API's 500-record cap.</footer>
+  </div>
+</div>
+
+<div id="tooltip" role="tooltip"></div>
+
+<script>
+(function(){
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const API = "https://data-api.polymarket.com/activity";
+  const PAGE_SIZE = 500;
+  const MAX_PAGES_PER_WALLET = 21; // API caps offset at 10000, so 21 pages (10,500 records) max
+  const ROWS_PER_RENDER = 300;
+
+  // ---------- theme (in-memory only) ----------
+  let dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  function applyTheme(){
+    document.documentElement.classList.toggle("dark", dark);
+    $("iconMoon").style.display = dark ? "none" : "";
+    $("iconSun").style.display = dark ? "" : "none";
+  }
+  $("themeBtn").addEventListener("click", () => { dark = !dark; applyTheme(); });
+  applyTheme();
+
+  // ---------- state ----------
+  let allRecords = [];
+  let filteredRecords = [];
+  let renderedCount = 0;
+  let pagesFetched = 0;
+  let fetching = false;
+
+  // ---------- helpers ----------
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const short = a => a ? a.slice(0,6) + "…" + a.slice(-4) : "";
+  const fmtUsd = n => Number(n||0).toLocaleString("en-US",{maximumFractionDigits:2, minimumFractionDigits:2});
+  const fmtNum = n => Number(n||0).toLocaleString("en-US",{maximumFractionDigits:4});
+  const fmtTime = ts => {
+    const d = new Date(ts*1000);
+    return d.toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+  };
+
+  function parseAddresses(raw){
+    const parts = raw.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean);
+    const valid=[], invalid=[];
+    const seen = new Set();
+    for(const p of parts){
+      if(/^0x[a-fA-F0-9]{40}$/.test(p)){ const k=p.toLowerCase(); if(!seen.has(k)){seen.add(k); valid.push(p);} }
+      else invalid.push(p);
+    }
+    return {valid, invalid};
+  }
+
+  // ---------- fetching with limit=500 & offset pagination ----------
+  async function fetchWallet(addr, params, onPage){
+    const out = [];
+    for(let page=0; page<MAX_PAGES_PER_WALLET; page++){
+      const offset = page * PAGE_SIZE;
+      const qs = new URLSearchParams({user:addr, limit:String(PAGE_SIZE), offset:String(offset), ...params});
+      const res = await fetch(API + "?" + qs.toString());
+      if(!res.ok){
+        let msg = "HTTP " + res.status;
+        try{ const j = await res.json(); if(j && j.error) msg += ": " + j.error; }catch(e){}
+        if(page === 0) throw new Error(msg);
+        // mid-pagination failure: keep what we have, note it
+        return {records:out, truncated:true, reason:msg};
+      }
+      const rows = await res.json();
+      pagesFetched++;
+      if(Array.isArray(rows)) out.push(...rows);
+      onPage(addr, page+1, out.length);
+      if(!Array.isArray(rows) || rows.length < PAGE_SIZE) return {records:out, truncated:false};
+    }
+    return {records:out, truncated:true, reason:"reached the API's max offset (10,000) — narrow the time range to see older records"};
+  }
+
+  async function run(){
+    if(fetching) return;
+    const {valid, invalid} = parseAddresses($("addrInput").value);
+    const errBox = $("errorBox");
+    errBox.textContent = "";
+    if(invalid.length) errBox.textContent = "Skipping invalid address" + (invalid.length>1?"es":"") + ": " + invalid.slice(0,3).join(", ") + (invalid.length>3?" …":"");
+    if(!valid.length){ errBox.textContent = "Enter at least one valid 0x address (40 hex characters)."; return; }
+
+    // build shared params
+    const params = {};
+    if($("typeSel").value) params.type = $("typeSel").value;
+    if($("sideSel").value) params.side = $("sideSel").value;
+    const win = $("timeSel").value;
+    if(win) params.start = String(Math.floor(Date.now()/1000) - Number(win));
+
+    fetching = true;
+    $("submitBtn").disabled = true;
+    $("progressBox").classList.add("active");
+    ["summaryBox","resultsBar","tableWrap","jsonWrap","emptyBox"].forEach(id=>$(id).classList.remove("active"));
+    allRecords = []; pagesFetched = 0;
+    const notes = [];
+
+    try{
+      for(const addr of valid){
+        $("progressText").textContent = "Fetching " + short(addr) + "…";
+        const r = await fetchWallet(addr, params, (a,p,count)=>{
+          $("progressText").textContent = short(a) + " · page " + p + " · " + count.toLocaleString() + " records";
+        });
+        allRecords.push(...r.records);
+        if(r.truncated) notes.push(short(addr) + ": partial results (" + r.reason + ")");
+      }
+      allRecords.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+      if(notes.length) errBox.textContent = notes.join(" · ");
+      renderAll();
+    }catch(e){
+      errBox.textContent = "Request failed — " + e.message;
+    }finally{
+      fetching = false;
+      $("submitBtn").disabled = false;
+      $("progressBox").classList.remove("active");
+    }
+  }
+
+  // ---------- rendering ----------
+  function renderAll(){
+    applySearch();
+    // summary
+    const vol = allRecords.reduce((s,r)=>s+(Number(r.usdcSize)||0),0);
+    const buys = allRecords.filter(r=>r.side==="BUY").length;
+    const sells = allRecords.filter(r=>r.side==="SELL").length;
+    const mkts = new Set(allRecords.map(r=>r.conditionId).filter(Boolean)).size;
+    const combos = allRecords.filter(r=>r.isCombo === true).length;
+    $("stCombos").textContent = combos.toLocaleString();
+    $("stRecords").textContent = allRecords.length.toLocaleString();
+    $("stVolume").textContent = "$" + fmtUsd(vol);
+    $("stBuys").textContent = buys.toLocaleString();
+    $("stSells").textContent = sells.toLocaleString();
+    $("stMarkets").textContent = mkts.toLocaleString();
+    $("stPages").textContent = pagesFetched.toLocaleString();
+
+    if(!allRecords.length){
+      $("emptyBox").classList.add("active");
+      $("summaryBox").classList.add("active");
+      return;
+    }
+    $("summaryBox").classList.add("active");
+    $("resultsBar").classList.add("active");
+    showTable();
+  }
+
+  function applySearch(){
+    const q = $("searchBox").value.trim().toLowerCase();
+    const combo = $("comboSel").value; // "" | "single" | "combo"
+    filteredRecords = allRecords.filter(r => {
+      if(combo === "combo" && r.isCombo !== true) return false;
+      if(combo === "single" && r.isCombo === true) return false;
+      if(!q) return true;
+      return (r.title||"").toLowerCase().includes(q) ||
+             (r.slug||"").toLowerCase().includes(q) ||
+             (r.outcome||"").toLowerCase().includes(q) ||
+             (r.type||"").toLowerCase().includes(q);
+    });
+  }
+
+  function rowHtml(r, idx){
+    const sideBadge = r.side === "BUY" ? '<span class="badge buy">BUY</span>'
+                    : r.side === "SELL" ? '<span class="badge sell">SELL</span>'
+                    : '<span class="badge neutral">—</span>';
+    const typeBadge = '<span class="badge neutral">' + esc(r.type||"?") + '</span>'
+      + (r.isCombo === true ? ' <span class="badge combo">COMBO</span>' : "");
+    const mkt = r.title
+      ? '<div class="market-cell" data-i="'+idx+'">' + (r.icon ? '<img src="'+esc(r.icon)+'" alt="" loading="lazy">' : "")
+        + '<a href="https://polymarket.com/event/'+esc(r.eventSlug||r.slug||"")+'" target="_blank" rel="noopener">'+esc(r.title)+'</a></div>'
+      : '<div class="market-cell" data-i="'+idx+'"><span class="outcome">—</span></div>';
+    const tx = r.transactionHash
+      ? '<a class="tx-link mono" href="https://polygonscan.com/tx/'+esc(r.transactionHash)+'" target="_blank" rel="noopener">'+esc(r.transactionHash.slice(0,10))+'…</a>'
+      : "";
+    return "<tr>"
+      + '<td class="time-cell mono">'+fmtTime(r.timestamp||0)+"</td>"
+      + '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(r.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(r.proxyWallet))+"</a></td>"
+      + "<td>"+typeBadge+"</td>"
+      + "<td>"+mkt+"</td>"
+      + '<td class="outcome">'+esc(r.outcome||"")+"</td>"
+      + "<td>"+sideBadge+"</td>"
+      + '<td class="num mono">'+fmtNum(r.size)+"</td>"
+      + '<td class="num mono">'+(r.price!=null?Number(r.price).toFixed(3):"")+"</td>"
+      + '<td class="num mono">'+fmtUsd(r.usdcSize)+"</td>"
+      + "<td>"+tx+"</td>"
+      + "</tr>";
+  }
+
+  function renderTableChunk(reset){
+    const body = $("tableBody");
+    if(reset){ body.innerHTML=""; renderedCount=0; hideTooltip(); }
+    const start = renderedCount;
+    const next = filteredRecords.slice(start, start+ROWS_PER_RENDER);
+    body.insertAdjacentHTML("beforeend", next.map((r,i)=>rowHtml(r, start+i)).join(""));
+    renderedCount += next.length;
+    $("loadMoreRow").classList.toggle("active", renderedCount < filteredRecords.length);
+    $("loadMoreBtn").textContent = "Show more (" + (filteredRecords.length-renderedCount).toLocaleString() + " remaining)";
+  }
+
+  function showTable(){
+    $("tabTable").classList.add("on"); $("tabJson").classList.remove("on");
+    $("jsonWrap").classList.remove("active");
+    $("tableWrap").classList.add("active");
+    renderTableChunk(true);
+  }
+
+  // pretty JSON with syntax highlighting (capped for DOM safety)
+  const JSON_VIEW_CAP = 1000;
+  function highlightJson(str){
+    return esc(str).replace(
+      /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false)\b|\bnull\b|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g,
+      (m, str_, colon, bool) => {
+        if(str_) return colon ? '<span class="jk">'+str_+'</span>'+colon : '<span class="js">'+str_+'</span>';
+        if(bool) return '<span class="jb">'+bool+'</span>';
+        if(m === "null") return '<span class="jz">null</span>';
+        return '<span class="jn">'+m+'</span>';
+      });
+  }
+  function showJson(){
+    $("tabJson").classList.add("on"); $("tabTable").classList.remove("on");
+    $("tableWrap").classList.remove("active");
+    const slice = filteredRecords.slice(0, JSON_VIEW_CAP);
+    $("jsonNote").textContent = filteredRecords.length > JSON_VIEW_CAP
+      ? "Showing first " + JSON_VIEW_CAP.toLocaleString() + " of " + filteredRecords.length.toLocaleString() + " records — use Download JSON for the full set."
+      : filteredRecords.length.toLocaleString() + " records, pretty-printed.";
+    $("jsonPre").innerHTML = highlightJson(JSON.stringify(slice, null, 2));
+    $("jsonWrap").classList.add("active");
+  }
+
+  // ---------- downloads ----------
+  function download(name, mime, content){
+    const blob = new Blob([content], {type:mime});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  }
+  const csvCell = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+  function toCsv(rows){
+    const cols = ["timestamp","proxyWallet","type","side","title","outcome","size","price","usdcSize","transactionHash","conditionId","slug"];
+    return [cols.join(",")].concat(rows.map(r => cols.map(c => csvCell(r[c])).join(","))).join("\n");
+  }
+
+  // ---------- hover tooltip (full market context + combo legs) ----------
+  const tooltip = $("tooltip");
+  let ttToken = 0; // invalidates stale async renders
+  const comboCache = new Map();  // conditionId -> legs array | Error
+  const titleCache = new Map();  // leg conditionId -> market question
+
+  function hideTooltip(){ ttToken++; tooltip.style.display = "none"; }
+
+  function positionTooltip(x, y){
+    tooltip.style.display = "block";
+    const pad = 14, r = tooltip.getBoundingClientRect();
+    let left = x + pad, top = y + pad;
+    if(left + r.width > window.innerWidth - 8)  left = Math.max(8, x - r.width - pad);
+    if(top + r.height > window.innerHeight - 8) top = Math.max(8, y - r.height - pad);
+    tooltip.style.left = left + "px";
+    tooltip.style.top  = top + "px";
+  }
+
+  function splitComboTitle(t){
+    if(!t) return null;
+    for(const sep of [" AND ", " and ", " + ", " · ", " | ", " & ", "; ", ", "]){
+      const parts = t.split(sep).map(s=>s.trim()).filter(Boolean);
+      if(parts.length >= 2) return parts;
+    }
+    return null;
+  }
+
+  function baseTooltipHtml(r){
+    let h;
+    const parts = r.isCombo === true ? splitComboTitle(r.title) : null;
+    if(parts){
+      h = '<div class="tt-title">Combo · ' + parts.length + ' legs</div>'
+        + '<ul class="tt-list">' + parts.map(p => "<li>" + esc(p) + "</li>").join("") + "</ul>";
+    }else{
+      h = '<div class="tt-title">' + esc(r.title || "(untitled market)") + "</div>";
+    }
+    const bits = [];
+    if(r.outcome) bits.push("Outcome: " + esc(r.outcome));
+    if(r.side) bits.push(esc(r.side));
+    if(r.price != null) bits.push("@ " + Number(r.price).toFixed(3));
+    if(bits.length) h += '<div class="tt-sub">' + bits.join(" · ") + "</div>";
+    return h;
+  }
+
+  function legsHtml(legs, parts){
+    if(!legs || !legs.length) return '<div class="tt-meta">No leg detail returned.</div>';
+    const sorted = legs.slice().sort((a,b)=>(a.leg_index??0)-(b.leg_index??0));
+    return '<ul class="tt-list">' + sorted.map((l,i) => {
+      const name = titleCache.get((l.leg_condition_id||"").toLowerCase())
+        || (parts && parts[i])
+        || short(l.leg_condition_id||"");
+      const st = String(l.leg_status||"").toUpperCase();
+      const won = st==="WON"||st==="RESOLVED_TRUE"||st==="RESOLVED_WIN";
+      const lost = st==="LOST"||st==="RESOLVED_FALSE"||st==="RESOLVED_LOSS";
+      const cls = won ? "won" : lost ? "lost" : "neutral";
+      const stLabel = won ? "WON" : lost ? "LOST" : st;
+      const px = l.leg_current_price != null ? ' <span class="tt-meta">'+Number(l.leg_current_price).toFixed(2)+"</span>" : "";
+      return '<li><span class="badge '+cls+'">'+esc(l.leg_outcome_label||"?")+"</span> "
+        + esc(name) + px + (stLabel?' <span class="tt-meta">'+esc(stLabel)+"</span>":"") + "</li>";
+    }).join("") + "</ul>";
+  }
+
+  function comboHeaderHtml(r, legCount){
+    let h = '<div class="tt-title">Combo · ' + legCount + ' legs</div>';
+    const bits = [];
+    if(r.outcome) bits.push("Outcome: " + esc(r.outcome));
+    if(r.side) bits.push(esc(r.side));
+    if(r.price != null) bits.push("@ " + Number(r.price).toFixed(3));
+    if(bits.length) h += '<div class="tt-sub">' + bits.join(" · ") + "</div>";
+    return h;
+  }
+
+  async function fetchComboLegs(r){
+    const key = (r.conditionId||"").toLowerCase();
+    if(comboCache.has(key)) return comboCache.get(key);
+    const p = (async () => {
+      // conditionId on a combo row == combo_condition_id; query by user, match by id
+      const qs = new URLSearchParams({user: r.proxyWallet, market_id: r.conditionId, limit: "50"});
+      let res = await fetch("https://data-api.polymarket.com/v1/activity/combos?" + qs);
+      if(!res.ok){ // param name fallback: fetch by user only and match client-side
+        res = await fetch("https://data-api.polymarket.com/v1/activity/combos?" + new URLSearchParams({user:r.proxyWallet, limit:"100"}));
+      }
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      const j = await res.json();
+      const rows = Array.isArray(j) ? j : (j.activity || []);
+      const hit = rows.find(a => (a.combo_condition_id||"").toLowerCase() === key) || rows[0];
+      const legs = hit && hit.legs ? hit.legs : [];
+      // resolve leg titles via Gamma (batched), tolerate failure
+      const missing = legs.map(l=>l.leg_condition_id).filter(id => id && !titleCache.has(id.toLowerCase()));
+      if(missing.length){
+        try{
+          const gq = missing.map(id=>"condition_ids="+encodeURIComponent(id)).join("&");
+          const gres = await fetch("https://gamma-api.polymarket.com/markets?" + gq);
+          if(gres.ok){
+            const mkts = await gres.json();
+            for(const m of (Array.isArray(mkts)?mkts:[])){
+              if(m.conditionId) titleCache.set(m.conditionId.toLowerCase(), m.question || m.title || "");
+            }
+          }
+        }catch(e){/* leg ids shown instead */}
+      }
+      return legs;
+    })();
+    comboCache.set(key, p);
+    try{ const legs = await p; comboCache.set(key, legs); return legs; }
+    catch(e){ comboCache.delete(key); throw e; }
+  }
+
+  async function showTooltipFor(cell, x, y){
+    const r = filteredRecords[Number(cell.dataset.i)];
+    if(!r) return;
+    const token = ++ttToken;
+    tooltip.innerHTML = baseTooltipHtml(r);
+    if(r.isCombo === true){
+      tooltip.innerHTML += '<div class="tt-meta">Combo — loading legs…</div>';
+      positionTooltip(x, y);
+      try{
+        const legs = await fetchComboLegs(r);
+        if(token !== ttToken) return; // pointer moved on
+        const parts = splitComboTitle(r.title);
+        tooltip.innerHTML = legs && legs.length
+          ? comboHeaderHtml(r, legs.length) + legsHtml(legs, parts)
+          : baseTooltipHtml(r) + legsHtml(legs, parts);
+      }catch(e){
+        if(token !== ttToken) return;
+        tooltip.innerHTML = baseTooltipHtml(r) + '<div class="tt-meta">Couldn\u2019t load combo legs ('+esc(e.message)+').</div>';
+      }
+    }
+    positionTooltip(x, y);
+  }
+
+  const tbodyEl = $("tableBody");
+  tbodyEl.addEventListener("mouseover", e => {
+    const cell = e.target.closest(".market-cell");
+    if(cell && tbodyEl.contains(cell)) showTooltipFor(cell, e.clientX, e.clientY);
+  });
+  tbodyEl.addEventListener("mousemove", e => {
+    const cell = e.target.closest(".market-cell");
+    if(cell && tooltip.style.display === "block") positionTooltip(e.clientX, e.clientY);
+  });
+  tbodyEl.addEventListener("mouseout", e => {
+    const cell = e.target.closest(".market-cell");
+    if(cell && !cell.contains(e.relatedTarget)) hideTooltip();
+  });
+  window.addEventListener("scroll", hideTooltip, true);
+
+  // ---------- events ----------
+  $("submitBtn").addEventListener("click", run);
+  $("addrInput").addEventListener("keydown", e => { if(e.key==="Enter" && (e.metaKey||e.ctrlKey)) run(); });
+  $("tabTable").addEventListener("click", showTable);
+  $("tabJson").addEventListener("click", showJson);
+  $("loadMoreBtn").addEventListener("click", ()=>renderTableChunk(false));
+  let searchTimer;
+  $("searchBox").addEventListener("input", ()=>{
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(()=>{
+      applySearch();
+      if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
+    }, 200);
+  });
+  $("comboSel").addEventListener("change", ()=>{
+    if(!allRecords.length) return;
+    applySearch();
+    if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
+  });
+  $("dlJson").addEventListener("click", ()=>download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2)));
+  $("dlCsv").addEventListener("click", ()=>download("polymarket-activity.csv","text/csv",toCsv(filteredRecords)));
+})();
+</script>
+</body>
+</html>
