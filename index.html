@@ -411,6 +411,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let typeFilter = "";    // client-side filter set by clicking a type badge
   let comboMode = "";     // "" | "single" | "combo"
   let dwOnly = false;     // D/W chip: show only deposits/withdrawals
+  // hybrid deep-fetch: when the unfiltered feed hits the API's offset cap it only
+  // covers the most recent slice, so filtering client-side to a sparse type would
+  // silently miss older records — a targeted type= query reaches much further back
+  let feedTruncated = false;
+  let deepFetched = new Set(); // types already deep-fetched (or not applicable) this run
+  let lastParams = {};
 
   // ---------- helpers ----------
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -687,6 +693,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const params = {};
     const win = $("timeSel").value;
     if(win) params.start = String(Math.floor(Date.now()/1000) - Number(win));
+    lastParams = params;
+    feedTruncated = false;
+    // rebates are always pre-fetched below; D/W come from the chain, not this API
+    deepFetched = new Set(["TAKER_REBATE","MAKER_REBATE","DEPOSIT","WITHDRAWAL"]);
 
     fetching = true;
     $("submitBtn").disabled = true;
@@ -703,7 +713,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           $("progressText").textContent = short(a) + " · page " + p + " · " + count.toLocaleString() + " records";
         });
         allRecords.push(...r.records);
-        if(r.truncated) notes.push(short(addr) + ": partial results (" + r.reason + ")");
+        if(r.truncated){ feedTruncated = true; notes.push(short(addr) + ": partial results (" + r.reason + ")"); }
         {
           $("progressText").textContent = short(addr) + " · checking on-chain USDC transfers…";
           try{
@@ -1148,6 +1158,37 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
   }
 
+  // targeted server-side type query, merged with dedup — only when the feed was
+  // truncated by the offset cap and the user filters to a specific type
+  async function maybeDeepFetch(type){
+    if(!type || !feedTruncated || deepFetched.has(type) || fetching) return;
+    deepFetched.add(type);
+    fetching = true;
+    $("submitBtn").disabled = true;
+    $("progressBox").classList.add("active");
+    // composite key: one tx can hold several distinct trade fills
+    const key = r => [r.type, r.transactionHash, r.timestamp, r.conditionId, r.side, r.size, r.price].join("|");
+    const seen = new Set(allRecords.map(key));
+    let added = 0;
+    try{
+      for(const addr of currentWallets){
+        const res = await fetchWallet(addr, {...lastParams, type}, (a,p,count)=>{
+          $("progressText").textContent = short(a) + " · deep-fetching " + type + " · page " + p + " · " + count.toLocaleString() + " records";
+        });
+        const fresh = res.records.filter(x => !seen.has(key(x)));
+        fresh.forEach(x => seen.add(key(x)));
+        allRecords.push(...fresh);
+        added += fresh.length;
+      }
+      if(added) $("errorBox").textContent = ($("errorBox").textContent ? $("errorBox").textContent + " · " : "")
+        + "deep-fetched " + added.toLocaleString() + " older " + type + " records beyond the capped feed";
+    }catch(e){}
+    fetching = false;
+    $("submitBtn").disabled = false;
+    $("progressBox").classList.remove("active");
+    refreshResults();
+  }
+
   let searchTimer;
   $("searchBox").addEventListener("input", ()=>{
     clearTimeout(searchTimer);
@@ -1249,6 +1290,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       typeFilter = typeFilter === bb.dataset.ft ? "" : bb.dataset.ft;
       renderChips();
       refreshResults();
+      if(typeFilter) maybeDeepFetch(typeFilter);
     }
   });
 
@@ -1303,7 +1345,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   });
 
   // post-fetch filters
-  $("typeSel").addEventListener("change", refreshResults);
+  $("typeSel").addEventListener("change", ()=>{ refreshResults(); maybeDeepFetch($("typeSel").value); });
   $("sideSel").addEventListener("change", refreshResults);
 
   // reset every client-side filter
