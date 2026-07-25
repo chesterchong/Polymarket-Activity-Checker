@@ -413,7 +413,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
   let pagesFetched = 0;
   let fetching = false;
   let sortDir = "desc";   // Time column sort direction
-  let typeFilter = "";    // client-side filter set by clicking a type badge
+  let marketFilter = null; // {conditionId, eventSlug, slug, title} set by clicking a row's type badge
   let comboMode = "";     // "" | "single" | "combo"
   let dwOnly = false;     // D/W chip: show only deposits/withdrawals
   // hybrid deep-fetch: when the unfiltered feed hits the API's offset cap it only
@@ -942,7 +942,13 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       if(comboMode === "single" && r.isCombo === true) return false;
       if(tSel && (r.type||"") !== tSel) return false;
       if(sSel && (r.side||"") !== sSel) return false;
-      if(typeFilter && (r.type||"") !== typeFilter) return false;
+      if(marketFilter){
+        const m = marketFilter;
+        const match = (m.conditionId && r.conditionId === m.conditionId)
+          || (m.eventSlug && r.eventSlug === m.eventSlug)
+          || (m.slug && r.slug === m.slug);
+        if(!match) return false;
+      }
       const ts = r.timestamp || 0;
       if(from != null && ts < from) return false;
       if(to != null && ts > to) return false;
@@ -1019,7 +1025,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
                     : r.side === "SELL" ? '<span class="badge sell">SELL</span>'
                     : '<span class="badge neutral">—</span>';
     const tcls = r.type === "DEPOSIT" ? "buy" : r.type === "WITHDRAWAL" ? "sell" : "neutral";
-    const typeBadge = '<button type="button" class="badge '+tcls+' badge-btn" data-ft="' + esc(r.type||"") + '" title="Click to filter by this type">' + esc(r.type||"?") + '</button>'
+    const typeBadge = '<button type="button" class="badge '+tcls+' badge-btn" data-ft="' + esc(r.type||"") + '" title="Click to show all activity for this market">' + esc(r.type||"?") + '</button>'
       + (r.isCombo === true ? ' <button type="button" class="badge combo badge-btn" data-fc="1" title="Click to show only combo records">COMBO</button>' : "");
     const mkt = r.isTransfer
       ? '<div class="market-cell" data-i="'+idx+'"><span>'+esc(r.title)+'</span></div>'
@@ -1372,14 +1378,16 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
   document.addEventListener("click", ()=> $("colsMenu").classList.remove("open"));
   applyHiddenCols();
 
-  // active-filter chip for badge-click type filters
+  // active-filter chip for badge-click market filters
   function renderChips(){
-    $("chips").innerHTML = typeFilter
-      ? '<button type="button" class="chip" title="Clear this filter">Type: ' + esc(typeFilter) + ' ×</button>'
+    const t = marketFilter ? marketFilter.title : "";
+    $("chips").innerHTML = marketFilter
+      ? '<button type="button" class="chip" title="Clear market filter">Market: '
+        + esc(t.length > 42 ? t.slice(0,42) + "…" : t) + ' ×</button>'
       : "";
   }
   $("chips").addEventListener("click", e => {
-    if(e.target.closest(".chip")){ typeFilter = ""; renderChips(); refreshResults(); }
+    if(e.target.closest(".chip")){ marketFilter = null; renderChips(); refreshResults(); }
   });
 
   // copy Tx hash + clickable type/combo badges (event delegation)
@@ -1404,10 +1412,24 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     if(!bb) return;
     if(bb.dataset.fc){ setComboMode(comboMode === "combo" ? "" : "combo"); }
     else if(bb.dataset.ft){
-      typeFilter = typeFilter === bb.dataset.ft ? "" : bb.dataset.ft;
+      // pivot to this row's market event: show all its activity, any type
+      const cell = bb.closest("tr")?.querySelector(".market-cell");
+      const r = cell ? filteredRecords[Number(cell.dataset.i)] : null;
+      if(!r) return;
+      if(r.conditionId || r.eventSlug || r.slug){
+        const same = marketFilter
+          && marketFilter.conditionId === (r.conditionId||"")
+          && marketFilter.slug === (r.slug||"");
+        marketFilter = same ? null : {
+          conditionId: r.conditionId||"", eventSlug: r.eventSlug||"",
+          slug: r.slug||"", title: r.title||"(untitled market)"
+        };
+      }else{
+        // transfers have no market — toggle the type dropdown instead
+        $("typeSel").value = $("typeSel").value === bb.dataset.ft ? "" : bb.dataset.ft;
+      }
       renderChips();
       refreshResults();
-      if(typeFilter) maybeDeepFetch(typeFilter);
     }
   });
 
@@ -1483,7 +1505,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     $("dateFrom").value = ""; $("dateTo").value = "";
     $("searchBox").value = "";
     $("rowsSel").value = "100"; pageSize = 100;
-    typeFilter = ""; renderChips();
+    marketFilter = null; renderChips();
     dwOnly = false; $("dwChip").classList.remove("on");
     comboMode = "";
     document.querySelectorAll("#comboSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === ""));
