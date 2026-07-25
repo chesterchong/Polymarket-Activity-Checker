@@ -617,6 +617,76 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return {records: out, truncated};
   }
 
+  // ---------- fallback: topic-indexed log queries (for over-active wallets) ----------
+  // token-transfers walks the wallet's ENTIRE transfer index (millions of rows for a
+  // whale) and 524s server-side. Topic-filtered Transfer logs bounded to the selected
+  // time window ask a much smaller question: PUSD mints to the wallet (deposits),
+  // PUSD unwraps and USDC.e sent to RelayDepository (withdrawals). Old-style USDC
+  // deposits from arbitrary EOAs cannot be topic-selected, so this recovers
+  // new-style flows only — hence it is a fallback, not the primary path.
+  const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+  const RELAY_DEPOSITORY = "0x4cd00e387622c35bddb9b4c962c136462338bc31";
+  const pad32 = a => "0x000000000000000000000000" + a.toLowerCase().slice(2);
+
+  async function latestBlockNumber(){
+    try{
+      const res = await fetch(BLOCKSCOUT + "/stats", {signal: AbortSignal.timeout(8000)});
+      if(res.ok){ const n = Number((await res.json()).total_blocks); if(n > 0) return n; }
+    }catch(e){}
+    // anchor fallback: block 90,859,324 observed 2026-07-25, ~2.15s Polygon blocks
+    return 90859324 + Math.floor((Date.now()/1000 - 1784990000) / 2.15);
+  }
+  async function getLogs(qs){
+    const res = await fetch("https://polygon.blockscout.com/api?module=logs&action=getLogs&" + qs,
+      {signal: AbortSignal.timeout(25000)});
+    if(!res.ok) throw new Error("logs HTTP " + res.status);
+    const j = await res.json();
+    return Array.isArray(j.result) ? j.result : [];
+  }
+  async function fetchTransfersViaLogs(addr, startTs){
+    const latest = await latestBlockNumber();
+    const now = Math.floor(Date.now()/1000);
+    const winSecs = startTs ? (now - startTs) : 90*86400; // all-time capped at ~90 days here
+    const fromBlock = Math.max(0, latest - Math.ceil(winSecs / 2.1 * 1.15)); // 15% margin; exact ts filter below
+    const w = pad32(addr);
+    const base = "fromBlock=" + fromBlock + "&toBlock=latest&topic0=" + TRANSFER_TOPIC
+      + "&topic0_1_opr=and&topic0_2_opr=and&topic1_2_opr=and";
+    const mints    = await getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + pad32(ZERO_ADDR) + "&topic2=" + w);
+    const unwraps  = await getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + w + "&topic2=" + pad32(PUSD_ADDR));
+    const relayOut = await getLogs(base + "&address=" + USDC_TOKENS[0] + "&topic1=" + w + "&topic2=" + pad32(RELAY_DEPOSITORY));
+    const truncated = [mints, unwraps, relayOut].some(l => l.length >= 1000); // API result cap
+    const byTx = new Map();
+    const add = (l, kind) => {
+      const ts = parseInt(l.timeStamp, 16), amt = parseInt(l.data, 16)/1e6;
+      if(!amt || (startTs && ts < startTs)) return;
+      const g = byTx.get(l.transactionHash) || {dep:0, wd:0, ts, relay:false};
+      if(kind === "mint") g.dep += amt;
+      else { g.wd = Math.max(g.wd, amt); if(kind === "relay") g.relay = true; } // unwrap+relay legs share the amount
+      g.ts = Math.min(g.ts, ts);
+      byTx.set(l.transactionHash, g);
+    };
+    mints.forEach(l => add(l, "mint"));
+    unwraps.forEach(l => add(l, "unwrap"));
+    relayOut.forEach(l => add(l, "relay"));
+    const out = [];
+    for(const [txh, g] of byTx){
+      const net = g.dep - g.wd;
+      let type, amt, title;
+      if(net > 0.005){ type = "DEPOSIT"; amt = net; title = "USDC deposit from Polymarket (PUSD mint)"; }
+      else if(net < -0.005 || (g.wd > 0.005 && !g.dep)){
+        type = "WITHDRAWAL"; amt = g.wd;
+        title = "USDC withdrawal " + (g.relay ? "to RelayDepository" : "(PUSD unwrap)");
+      }
+      else continue; // net-zero wrap/unwrap conversion
+      out.push({
+        proxyWallet: addr, timestamp: g.ts, type, size: amt, usdcSize: amt,
+        transactionHash: txh, price: 0, side: "", outcome: "", conditionId: "", slug: "",
+        title, isTransfer: true
+      });
+    }
+    return {records: out, truncated};
+  }
+
   // ---------- wallet contract type (Blockscout) ----------
   const walletMeta = new Map(); // lowercase address -> label, cached across runs
   let currentWallets = [];
@@ -725,8 +795,23 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             allRecords.push(...recs);
             if(dw.truncated) notes.push(short(addr) + ": deposits/withdrawals limited to the most recent " + (DW_MAX_PAGES_PER_TOKEN*50) + " transfers per token");
           }catch(e){
-            const why = e.name === "TimeoutError" ? "explorer timed out — wallet has too many transfers" : e.message;
-            notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + why + ")");
+            // fall back to topic-indexed log queries (fast even for busy wallets,
+            // but covers new-style PUSD/relay flows only)
+            try{
+              $("progressText").textContent = short(addr) + " · explorer slow, trying topic-indexed logs…";
+              const startTs = params.start ? Number(params.start) : null;
+              const dw2 = await fetchTransfersViaLogs(addr, startTs);
+              const seenTxs = new Set(r.records.map(x => (x.transactionHash||"").toLowerCase()).filter(Boolean));
+              const recs = dw2.records.filter(x => !seenTxs.has(x.transactionHash.toLowerCase()));
+              allRecords.push(...recs);
+              notes.push(short(addr) + ": deposits/withdrawals via topic-indexed logs — new-style (PUSD/relay) transfers only"
+                + (startTs ? "" : ", last ~90 days"
+                ) + (dw2.truncated ? "; hit the 1,000-event cap so results may be partial" : ""));
+            }catch(e2){
+              const why = (e.name === "TimeoutError" || e2.name === "TimeoutError")
+                ? "explorer timed out — wallet has too many transfers" : e2.message;
+              notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + why + ")");
+            }
           }
         }
         // rebates are sparse but pay out daily — the offset-capped main feed can miss
@@ -1337,6 +1422,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     });
   });
   // one download button whose format follows the active tab
+  window.__pmacDebug = {fetchTransfersViaLogs}; // console access for diagnostics
+
   $("dlBtn").addEventListener("click", ()=>{
     if($("tabJson").classList.contains("on"))
       download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2));
