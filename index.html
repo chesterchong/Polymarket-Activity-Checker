@@ -95,6 +95,9 @@ select:focus-visible,.btn:focus-visible,textarea:focus-visible,.tab:focus-visibl
 .stat:last-child{border-right:none;}
 .stat .label{font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted-foreground);}
 .stat .value{font-size:18px; font-weight:600; margin-top:2px; font-variant-numeric:tabular-nums;}
+.stat .value.pos{color:var(--success);}
+.stat .value.neg{color:var(--destructive);}
+.stat .label span{text-transform:none; letter-spacing:0;}
 
 /* results header */
 .results-bar{display:none; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;}
@@ -311,6 +314,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <div class="stat"><div class="label">Sells</div><div class="value" id="stSells">–</div></div>
       <div class="stat"><div class="label">Markets</div><div class="value" id="stMarkets">–</div></div>
       <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
+      <div class="stat"><div class="label">Deposits</div><div class="value" id="stDeposits">–</div></div>
+      <div class="stat"><div class="label">Withdrawals</div><div class="value" id="stWithdrawals">–</div></div>
+      <div class="stat" title="Profit and loss over the selected time range (from Polymarket's PnL API) — unaffected by the client-side filters below"><div class="label">PnL <span id="pnlWindow"></span></div><div class="value" id="stPnl">–</div></div>
       <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
     </div>
 
@@ -479,9 +485,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
   // ---------- fetching with limit=500 & offset pagination ----------
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
-  async function fetchWithRetry(url, tries=3){
+  async function fetchWithRetry(url, tries=3, timeoutMs=0){
     for(let attempt=0; ; attempt++){
-      const res = await fetch(url);
+      const res = await fetch(url, timeoutMs ? {signal: AbortSignal.timeout(timeoutMs)} : undefined);
       if((res.status === 429 || res.status >= 500) && attempt < tries-1){
         const ra = Number(res.headers.get("Retry-After"));
         await sleep(ra > 0 ? ra*1000 : 1000 * Math.pow(2, attempt));
@@ -539,7 +545,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     for(const token of USDC_TOKENS){
       let qs = "type=ERC-20&token=" + token;
       for(let page=0; page<DW_MAX_PAGES_PER_TOKEN; page++){
-        const res = await fetchWithRetry(BLOCKSCOUT + "/addresses/" + addr + "/token-transfers?" + qs);
+        // very active wallets can take minutes to index on the explorer — give up
+        // after 15s per page rather than stalling the whole run
+        const res = await fetchWithRetry(BLOCKSCOUT + "/addresses/" + addr + "/token-transfers?" + qs, 2, 15000);
         if(!res.ok) throw new Error("Blockscout HTTP " + res.status);
         const j = await res.json();
         let pastWindow = false;
@@ -590,7 +598,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(walletMeta.has(k)) return walletMeta.get(k);
     let label = "unknown";
     try{
-      const res = await fetch(BLOCKSCOUT + "/addresses/" + addr);
+      const res = await fetch(BLOCKSCOUT + "/addresses/" + addr, {signal: AbortSignal.timeout(10000)});
       if(res.ok){
         const j = await res.json();
         label = (j.implementations && j.implementations[0] && j.implementations[0].name)
@@ -601,6 +609,39 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     walletMeta.set(k, label);
     return label;
   }
+  // ---------- PnL over the selected time frame (Polymarket user-pnl API) ----------
+  // The API returns a cumulative PnL series; the window's PnL is last − first.
+  // For windows without a native interval (90d), we slice the "max" series.
+  function pnlPlan(win){ // timeSel value -> {interval, fidelity, sliceStart, label}
+    if(win === "86400")   return {interval:"1d",  fidelity:"1h", label:"24h"};
+    if(win === "604800")  return {interval:"1w",  fidelity:"1h", label:"7d"};
+    if(win === "2592000") return {interval:"1m",  fidelity:"1d", label:"30d"};
+    if(win === "7776000") return {interval:"max", fidelity:"1d", sliceStart:true, label:"90d"};
+    return {interval:"max", fidelity:"1d", label:"all time"};
+  }
+  async function fetchPnl(addr, win){
+    const plan = pnlPlan(win);
+    const res = await fetchWithRetry("https://user-pnl-api.polymarket.com/user-pnl?"
+      + new URLSearchParams({user_address: addr, interval: plan.interval, fidelity: plan.fidelity}));
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    let series = await res.json();
+    if(!Array.isArray(series) || !series.length) return 0;
+    if(plan.sliceStart){
+      const cutoff = Math.floor(Date.now()/1000) - Number(win);
+      const sliced = series.filter(pt => pt.t >= cutoff);
+      // if the account is younger than the window, keep the full series
+      series = sliced.length ? sliced : series;
+    }
+    return (series[series.length-1].p || 0) - (plan.interval === "max" && !plan.sliceStart ? 0 : (series[0].p || 0));
+  }
+  function renderPnl(total){
+    const el = $("stPnl");
+    el.classList.remove("pos","neg");
+    if(total === null){ el.textContent = "–"; return; }
+    el.textContent = (total < 0 ? "-$" : "$") + fmtUsd(Math.abs(total));
+    el.classList.add(total >= 0 ? "pos" : "neg");
+  }
+
   function renderWalletTags(){
     const box = $("walletsBox");
     box.innerHTML = currentWallets.map(a => {
@@ -653,12 +694,18 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             allRecords.push(...recs);
             if(dw.truncated) notes.push(short(addr) + ": deposits/withdrawals limited to the most recent " + (DW_MAX_PAGES_PER_TOKEN*50) + " transfers per token");
           }catch(e){
-            notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + e.message + ")");
+            const why = e.name === "TimeoutError" ? "explorer timed out — wallet has too many transfers" : e.message;
+            notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + why + ")");
           }
         }
         fetchWalletMeta(addr).then(renderWalletTags);
       }
       renderWalletTags();
+      $("pnlWindow").textContent = "(" + pnlPlan(win).label + ")";
+      $("stPnl").textContent = "…";
+      Promise.all(valid.map(a => fetchPnl(a, win)))
+        .then(parts => renderPnl(parts.reduce((s,v)=>s+v, 0)))
+        .catch(() => renderPnl(null));
       allRecords.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       if(notes.length) errBox.textContent = notes.join(" · ");
       renderAll();
@@ -679,6 +726,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const sells = rows.filter(r=>r.side==="SELL").length;
     const mkts = new Set(rows.map(r=>r.conditionId).filter(Boolean)).size;
     const combos = rows.filter(r=>r.isCombo === true).length;
+    const dep = rows.reduce((s,r)=>s+(r.type==="DEPOSIT" ? Number(r.usdcSize)||0 : 0),0);
+    const wd  = rows.reduce((s,r)=>s+(r.type==="WITHDRAWAL" ? Number(r.usdcSize)||0 : 0),0);
+    $("stDeposits").textContent = "$" + fmtUsd(dep);
+    $("stWithdrawals").textContent = "$" + fmtUsd(wd);
     $("stCombos").textContent = combos.toLocaleString();
     $("stRecords").textContent = rows.length.toLocaleString()
       + (rows.length !== allRecords.length ? " / " + allRecords.length.toLocaleString() : "");
