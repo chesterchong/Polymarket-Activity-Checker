@@ -523,10 +523,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // USDC transfers, not market activity), so we read them from the chain and
   // merge them in as DEPOSIT / WITHDRAWAL records.
   const BLOCKSCOUT = "https://polygon.blockscout.com/api/v2";
+  const PUSD_ADDR = "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb"; // Polymarket USD wrapper
   const USDC_TOKENS = [
     "0x2791bca1f2de4661ed88a30c99a7a9449aa84174", // USDC.e (bridged — what Polymarket settles in)
-    "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"  // native USDC
+    "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", // native USDC
+    PUSD_ADDR // PUSD — new (ERC-4337 handleOps) deposits mint this straight to the wallet
   ];
+  const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
   // trading-infrastructure counterparties: transfers to/from these are trade
   // settlements/redemptions already shown as activity records, not deposits
   const INFRA_ADDRS = new Set([
@@ -562,7 +565,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           const amt = Number(it.total && it.total.value || 0) / Math.pow(10, dec);
           if(!amt) continue;
           const g = byTx.get(it.transaction_hash) || {in:0, out:0, ts, inFrom:null, outTo:null};
-          if(from === a){ g.out += amt; g.outTo = other; } else { g.in += amt; g.inFrom = other; }
+          // prefer a real counterparty over the PUSD wrapper / zero address for labeling
+          if(from === a){
+            g.out += amt;
+            if(!g.outTo || (g.outTo.hash||"").toLowerCase() === PUSD_ADDR) g.outTo = other;
+          }else{
+            g.in += amt;
+            if(!g.inFrom || (g.inFrom.hash||"").toLowerCase() === ZERO_ADDR) g.inFrom = other;
+          }
           g.ts = Math.min(g.ts, ts);
           byTx.set(it.transaction_hash, g);
         }
@@ -577,9 +587,15 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       let type, amt, other, via = "";
       if(net > 0.005){ type = "DEPOSIT"; amt = net; other = g.inFrom; }
       else if(net < -0.005){ type = "WITHDRAWAL"; amt = -net; other = g.outTo; }
-      else if(g.out > 0){ type = "WITHDRAWAL"; amt = g.out; other = g.outTo; via = " (via relay)"; } // pass-through
+      else if(g.out > 0){
+        // net-zero: skip pure PUSD wrap/unwrap conversions; keep relay pass-through withdrawals
+        if(g.outTo && (g.outTo.hash||"").toLowerCase() === PUSD_ADDR) continue;
+        type = "WITHDRAWAL"; amt = g.out; other = g.outTo; via = " (via relay)";
+      }
       else continue;
-      const oname = other ? (other.name || short(other.hash)) : "?";
+      const oname = other
+        ? ((other.hash||"").toLowerCase() === ZERO_ADDR ? "Polymarket (PUSD mint)" : (other.name || short(other.hash)))
+        : "?";
       out.push({
         proxyWallet: addr, timestamp: g.ts, type, size: amt, usdcSize: amt,
         transactionHash: txh, price: 0, side: "", outcome: "", conditionId: "", slug: "",
@@ -689,7 +705,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           $("progressText").textContent = short(addr) + " · checking on-chain USDC transfers…";
           try{
             const dw = await fetchTransfers(addr, params.start ? Number(params.start) : null);
-            let recs = dw.records;
+            // drop txs already represented as activity records (redeems/rewards that
+            // settle through the PUSD wrapper would otherwise look like deposits)
+            const seenTxs = new Set(r.records.map(x => (x.transactionHash||"").toLowerCase()).filter(Boolean));
+            let recs = dw.records.filter(x => !seenTxs.has(x.transactionHash.toLowerCase()));
             if(params.type) recs = recs.filter(x => x.type === params.type);
             allRecords.push(...recs);
             if(dw.truncated) notes.push(short(addr) + ": deposits/withdrawals limited to the most recent " + (DW_MAX_PAGES_PER_TOKEN*50) + " transfers per token");
