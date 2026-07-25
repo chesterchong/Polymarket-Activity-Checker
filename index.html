@@ -121,8 +121,10 @@ table{width:100%; border-collapse:collapse; font-size:13px;}
 th{
   text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:500;
   color:var(--muted-foreground); padding:8px 12px; border-bottom:1px solid var(--border);
+  border-right:1px solid var(--border);
   background:var(--muted); white-space:nowrap; position:sticky; top:0;
 }
+th:last-child{border-right:none;}
 td{padding:8px 12px; border-bottom:1px solid var(--border); vertical-align:middle; white-space:nowrap;}
 tr:last-child td{border-bottom:none;}
 tbody tr:hover{background:var(--muted);}
@@ -267,31 +269,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       </div>
       <div class="toolbar">
         <div class="toolbar-left">
-          <select id="typeSel" aria-label="Activity type">
-            <option value="">All types</option>
-            <option value="TRADE">Trade</option>
-            <option value="SPLIT">Split</option>
-            <option value="MERGE">Merge</option>
-            <option value="REDEEM">Redeem</option>
-            <option value="REWARD">Reward</option>
-            <option value="CONVERSION">Conversion</option>
-            <option value="DEPOSIT">Deposit</option>
-            <option value="WITHDRAWAL">Withdrawal</option>
-            <option value="YIELD">Yield</option>
-            <option value="MAKER_REBATE">Maker rebate</option>
-            <option value="TAKER_REBATE">Taker rebate</option>
-            <option value="REFERRAL_REWARD">Referral reward</option>
-          </select>
-          <select id="sideSel" aria-label="Side">
-            <option value="">All sides</option>
-            <option value="BUY">Buy</option>
-            <option value="SELL">Sell</option>
-          </select>
-          <div class="seg" id="comboSeg" role="group" aria-label="Prediction type">
-            <button type="button" class="seg-btn on" data-v="">All</button>
-            <button type="button" class="seg-btn" data-v="single">Single</button>
-            <button type="button" class="seg-btn" data-v="combo">Combo</button>
-          </div>
           <select id="timeSel" aria-label="Time range">
             <option value="">All time</option>
             <option value="86400">Last 24 hours</option>
@@ -299,6 +276,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             <option value="2592000">Last 30 days</option>
             <option value="7776000">Last 90 days</option>
           </select>
+          <span class="hint">Filters appear below the statistics after checking.</span>
         </div>
         <button class="btn btn-primary" id="submitBtn">Check activity</button>
       </div>
@@ -316,6 +294,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
       <div class="stat"><div class="label">Deposits</div><div class="value" id="stDeposits">–</div></div>
       <div class="stat"><div class="label">Withdrawals</div><div class="value" id="stWithdrawals">–</div></div>
+      <div class="stat" title="Estimated taker fees on the trades in view (makers pay none)"><div class="label">Fees (est.)</div><div class="value" id="stFees">–</div></div>
+      <div class="stat" title="Sum of TAKER_REBATE records in view"><div class="label">Taker rebates</div><div class="value" id="stTakerRebates">–</div></div>
       <div class="stat" title="Profit and loss over the selected time range (from Polymarket's PnL API) — unaffected by the client-side filters below"><div class="label">PnL <span id="pnlWindow"></span></div><div class="value" id="stPnl">–</div></div>
       <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
     </div>
@@ -328,6 +308,31 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button class="tab on" id="tabTable" role="tab">Table</button>
           <button class="tab" id="tabJson" role="tab">JSON</button>
         </div>
+        <select id="typeSel" aria-label="Activity type">
+          <option value="">All types</option>
+          <option value="TRADE">Trade</option>
+          <option value="SPLIT">Split</option>
+          <option value="MERGE">Merge</option>
+          <option value="REDEEM">Redeem</option>
+          <option value="REWARD">Reward</option>
+          <option value="CONVERSION">Conversion</option>
+          <option value="DEPOSIT">Deposit</option>
+          <option value="WITHDRAWAL">Withdrawal</option>
+          <option value="YIELD">Yield</option>
+          <option value="MAKER_REBATE">Maker rebate</option>
+          <option value="TAKER_REBATE">Taker rebate</option>
+          <option value="REFERRAL_REWARD">Referral reward</option>
+        </select>
+        <select id="sideSel" aria-label="Side">
+          <option value="">All sides</option>
+          <option value="BUY">Buy</option>
+          <option value="SELL">Sell</option>
+        </select>
+        <div class="seg" id="comboSeg" role="group" aria-label="Prediction type">
+          <button type="button" class="seg-btn on" data-v="">All</button>
+          <button type="button" class="seg-btn" data-v="single">Single</button>
+          <button type="button" class="seg-btn" data-v="combo">Combo</button>
+        </div>
         <span class="seg-label">Date</span>
         <input type="date" id="dateFrom" aria-label="From date" title="Show records from this date">
         <input type="date" id="dateTo" aria-label="To date" title="Show records up to this date">
@@ -339,6 +344,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         </select>
         <button type="button" class="chip" id="dwChip" title="Show only deposits and withdrawals">D/W</button>
         <span id="chips" class="chips"></span>
+        <button class="btn" id="resetBtn" title="Reset all filters">Reset filters</button>
       </div>
       <div class="results-actions">
         <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
@@ -346,8 +352,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button class="btn" id="colsBtn">Columns ▾</button>
           <div class="cols-menu" id="colsMenu"></div>
         </div>
-        <button class="btn" id="dlJson">Download JSON</button>
-        <button class="btn" id="dlCsv">Download CSV</button>
+        <button class="btn" id="dlBtn">Download CSV</button>
       </div>
     </div>
 
@@ -677,10 +682,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(!valid.length){ errBox.textContent = "Enter at least one valid 0x address (40 hex characters)."; return; }
     saveAddrHistory(valid);
 
-    // build shared params
+    // build shared params — only the time range is applied at fetch time;
+    // everything else filters client-side after the data is in
     const params = {};
-    if($("typeSel").value) params.type = $("typeSel").value;
-    if($("sideSel").value) params.side = $("sideSel").value;
     const win = $("timeSel").value;
     if(win) params.start = String(Math.floor(Date.now()/1000) - Number(win));
 
@@ -691,7 +695,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     allRecords = []; pagesFetched = 0;
     currentWallets = valid.slice();
     const notes = [];
-    const wantsDW = !params.type || params.type === "DEPOSIT" || params.type === "WITHDRAWAL";
 
     try{
       for(const addr of valid){
@@ -701,15 +704,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         });
         allRecords.push(...r.records);
         if(r.truncated) notes.push(short(addr) + ": partial results (" + r.reason + ")");
-        if(wantsDW){
+        {
           $("progressText").textContent = short(addr) + " · checking on-chain USDC transfers…";
           try{
             const dw = await fetchTransfers(addr, params.start ? Number(params.start) : null);
             // drop txs already represented as activity records (redeems/rewards that
             // settle through the PUSD wrapper would otherwise look like deposits)
             const seenTxs = new Set(r.records.map(x => (x.transactionHash||"").toLowerCase()).filter(Boolean));
-            let recs = dw.records.filter(x => !seenTxs.has(x.transactionHash.toLowerCase()));
-            if(params.type) recs = recs.filter(x => x.type === params.type);
+            const recs = dw.records.filter(x => !seenTxs.has(x.transactionHash.toLowerCase()));
             allRecords.push(...recs);
             if(dw.truncated) notes.push(short(addr) + ": deposits/withdrawals limited to the most recent " + (DW_MAX_PAGES_PER_TOKEN*50) + " transfers per token");
           }catch(e){
@@ -717,6 +719,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + why + ")");
           }
         }
+        // rebates are sparse but pay out daily — the offset-capped main feed can miss
+        // them on hyper-active wallets, so fetch them explicitly and merge (deduped)
+        try{
+          const seen = new Set(allRecords.map(x => x.type + ":" + (x.transactionHash||"").toLowerCase()));
+          for(const rt of ["TAKER_REBATE","MAKER_REBATE"]){
+            const qs = new URLSearchParams({user:addr, limit:"500", offset:"0", type:rt, ...params});
+            const res = await fetchWithRetry(API + "?" + qs.toString(), 3, 15000);
+            if(!res.ok) continue;
+            const rows = await res.json();
+            if(Array.isArray(rows))
+              allRecords.push(...rows.filter(x => !seen.has(x.type + ":" + (x.transactionHash||"").toLowerCase())));
+          }
+        }catch(e){}
         fetchWalletMeta(addr).then(renderWalletTags);
       }
       renderWalletTags();
@@ -749,6 +764,15 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const wd  = rows.reduce((s,r)=>s+(r.type==="WITHDRAWAL" ? Number(r.usdcSize)||0 : 0),0);
     $("stDeposits").textContent = "$" + fmtUsd(dep);
     $("stWithdrawals").textContent = "$" + fmtUsd(wd);
+    let feeSum = 0, feePending = false;
+    for(const r of rows){
+      const f = computeFeeFor(r);
+      if(f === undefined) feePending = true;
+      else if(f) feeSum += f;
+    }
+    $("stFees").textContent = "$" + fmtUsd(feeSum) + (feePending ? " …" : "");
+    const rebates = rows.reduce((s,r)=>s+(r.type==="TAKER_REBATE" ? Number(r.usdcSize)||0 : 0),0);
+    $("stTakerRebates").textContent = "$" + fmtUsd(rebates);
     $("stCombos").textContent = combos.toLocaleString();
     $("stRecords").textContent = rows.length.toLocaleString()
       + (rows.length !== allRecords.length ? " / " + allRecords.length.toLocaleString() : "");
@@ -762,6 +786,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function renderAll(){
     applySearch();
     renderSummary();
+    loadFeesFor(filteredRecords); // async; resolves the Fees (est.) total
 
     if(!allRecords.length){
       $("emptyBox").classList.add("active");
@@ -783,10 +808,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function applySearch(){
     const q = $("searchBox").value.trim().toLowerCase();
     const from = dateBound("dateFrom", false), to = dateBound("dateTo", true);
+    const tSel = $("typeSel").value, sSel = $("sideSel").value;
     filteredRecords = allRecords.filter(r => {
       if(dwOnly && r.type !== "DEPOSIT" && r.type !== "WITHDRAWAL") return false;
       if(comboMode === "combo" && r.isCombo !== true) return false;
       if(comboMode === "single" && r.isCombo === true) return false;
+      if(tSel && (r.type||"") !== tSel) return false;
+      if(sSel && (r.side||"") !== sSel) return false;
       if(typeFilter && (r.type||"") !== typeFilter) return false;
       const ts = r.timestamp || 0;
       if(from != null && ts < from) return false;
@@ -825,10 +853,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       if(r) td.textContent = feeCellText(r);
     });
   }
+  const feeInflight = new Set();
   async function loadFeesFor(rows){
     const need = [...new Set(rows
-      .filter(r => r.type === "TRADE" && r.conditionId && !feeCache.has(r.conditionId.toLowerCase()))
+      .filter(r => r.type === "TRADE" && r.conditionId
+        && !feeCache.has(r.conditionId.toLowerCase())
+        && !feeInflight.has(r.conditionId.toLowerCase()))
       .map(r => r.conditionId))];
+    need.forEach(id => feeInflight.add(id.toLowerCase()));
     for(let i=0; i<need.length; i+=20){
       const chunk = need.slice(i, i+20);
       try{
@@ -849,8 +881,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       }catch(e){}
       // anything gamma didn't return is treated as fee-free rather than re-fetched forever
       chunk.forEach(id => { const k = id.toLowerCase(); if(!feeCache.has(k)) feeCache.set(k, null); });
+      refreshFeeCells();
+      renderSummary(); // keep the Fees (est.) stat converging as schedules arrive
     }
-    if(need.length) refreshFeeCells();
+    need.forEach(id => feeInflight.delete(id.toLowerCase()));
   }
 
   function rowHtml(r, idx){
@@ -901,6 +935,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("tabTable").classList.add("on"); $("tabJson").classList.remove("on");
     $("jsonWrap").classList.remove("active");
     $("tableWrap").classList.add("active");
+    $("dlBtn").textContent = "Download CSV";
     renderTableChunk(true);
   }
 
@@ -919,6 +954,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function showJson(){
     $("tabJson").classList.add("on"); $("tabTable").classList.remove("on");
     $("tableWrap").classList.remove("active");
+    $("dlBtn").textContent = "Download JSON";
     const slice = filteredRecords.slice(0, JSON_VIEW_CAP);
     $("jsonNote").textContent = filteredRecords.length > JSON_VIEW_CAP
       ? "Showing first " + JSON_VIEW_CAP.toLocaleString() + " of " + filteredRecords.length.toLocaleString() + " records — use Download JSON for the full set."
@@ -1107,6 +1143,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(!allRecords.length) return;
     applySearch();
     renderSummary();
+    loadFeesFor(filteredRecords); // async; resolves the Fees (est.) total
     $("emptyBox").classList.toggle("active", !filteredRecords.length);
     if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
   }
@@ -1257,8 +1294,30 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       document.body.style.cursor = "col-resize";
     });
   });
-  $("dlJson").addEventListener("click", ()=>download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2)));
-  $("dlCsv").addEventListener("click", ()=>download("polymarket-activity.csv","text/csv",toCsv(filteredRecords)));
+  // one download button whose format follows the active tab
+  $("dlBtn").addEventListener("click", ()=>{
+    if($("tabJson").classList.contains("on"))
+      download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2));
+    else
+      download("polymarket-activity.csv","text/csv",toCsv(filteredRecords));
+  });
+
+  // post-fetch filters
+  $("typeSel").addEventListener("change", refreshResults);
+  $("sideSel").addEventListener("change", refreshResults);
+
+  // reset every client-side filter
+  $("resetBtn").addEventListener("click", ()=>{
+    $("typeSel").value = ""; $("sideSel").value = "";
+    $("dateFrom").value = ""; $("dateTo").value = "";
+    $("searchBox").value = "";
+    $("rowsSel").value = "100"; pageSize = 100;
+    typeFilter = ""; renderChips();
+    dwOnly = false; $("dwChip").classList.remove("on");
+    comboMode = "";
+    document.querySelectorAll("#comboSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === ""));
+    refreshResults();
+  });
 })();
 </script>
 </body>
