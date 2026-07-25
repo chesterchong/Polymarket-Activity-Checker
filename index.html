@@ -210,6 +210,27 @@ table.resized td{overflow:hidden; text-overflow:ellipsis;}
 button.badge-btn{border:none; cursor:pointer; font-family:inherit; line-height:1.5;}
 button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
+/* wallet contract-type tags */
+.wallets{display:none; gap:8px; flex-wrap:wrap;}
+.wallets.active{display:flex;}
+.wallet-tag{border:1px solid var(--border); background:var(--card); padding:4px 10px; font-size:12px; color:var(--muted-foreground);}
+.wallet-tag .wtype{color:var(--primary); font-weight:500; margin-left:6px;}
+
+/* active D/W chip */
+.chip.on{background:var(--primary); color:var(--primary-foreground); border-style:solid; border-color:var(--primary);}
+
+/* columns show/hide menu */
+.cols-wrap{position:relative;}
+.cols-menu{
+  display:none; position:absolute; right:0; top:34px; z-index:20; min-width:160px;
+  border:1px solid var(--border); background:var(--card); box-shadow:0 8px 24px rgba(0,0,0,.18);
+  padding:6px 0;
+}
+.cols-menu.open{display:block;}
+.cols-item{display:flex; align-items:center; gap:8px; padding:5px 12px; font-size:13px; cursor:pointer; white-space:nowrap;}
+.cols-item:hover{background:var(--muted);}
+.cols-item input{accent-color:var(--primary);}
+
 /* tx copy button */
 .copy-btn{margin-left:6px; border:1px solid var(--border); background:transparent; color:var(--muted-foreground); cursor:pointer; font-size:11px; padding:1px 6px; font-family:inherit;}
 .copy-btn:hover{color:var(--primary); border-color:var(--primary);}
@@ -251,6 +272,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             <option value="REDEEM">Redeem</option>
             <option value="REWARD">Reward</option>
             <option value="CONVERSION">Conversion</option>
+            <option value="DEPOSIT">Deposit</option>
+            <option value="WITHDRAWAL">Withdrawal</option>
+            <option value="YIELD">Yield</option>
+            <option value="MAKER_REBATE">Maker rebate</option>
+            <option value="TAKER_REBATE">Taker rebate</option>
+            <option value="REFERRAL_REWARD">Referral reward</option>
           </select>
           <select id="sideSel" aria-label="Side">
             <option value="">All sides</option>
@@ -287,6 +314,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
     </div>
 
+    <div class="wallets" id="walletsBox"></div>
+
     <div class="results-bar" id="resultsBar">
       <div class="rb-left">
         <div class="tabs" role="tablist">
@@ -302,10 +331,15 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <option value="100" selected>100 rows</option>
           <option value="200">200 rows</option>
         </select>
+        <button type="button" class="chip" id="dwChip" title="Show only deposits and withdrawals">D/W</button>
         <span id="chips" class="chips"></span>
       </div>
       <div class="results-actions">
         <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
+        <div class="cols-wrap">
+          <button class="btn" id="colsBtn">Columns ▾</button>
+          <div class="cols-menu" id="colsMenu"></div>
+        </div>
         <button class="btn" id="dlJson">Download JSON</button>
         <button class="btn" id="dlCsv">Download CSV</button>
       </div>
@@ -316,7 +350,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <thead>
           <tr>
             <th class="sortable" id="thTime" title="Sort by date">Time <span id="sortArrow">▼</span></th><th>Wallet</th><th>Type</th><th>Market</th><th>Outcome</th>
-            <th>Side</th><th class="num">Size</th><th class="num">Price</th><th class="num">USDC</th><th>Tx</th>
+            <th>Side</th><th class="num">Size</th><th class="num">Price</th><th class="num">USDC</th><th class="num" title="Estimated taker fee — makers pay no fee">Fee (est.)</th><th>Tx</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -365,6 +399,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let sortDir = "desc";   // Time column sort direction
   let typeFilter = "";    // client-side filter set by clicking a type badge
   let comboMode = "";     // "" | "single" | "combo"
+  let dwOnly = false;     // D/W chip: show only deposits/withdrawals
 
   // ---------- helpers ----------
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -388,16 +423,27 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
 
   // ---------- address history + inline autocomplete (Tab to accept) ----------
-  const HIST_KEY = "pmac_addr_history";
+  // Entries carry a last-used timestamp; every page load prunes entries unused
+  // for HIST_MAX_AGE and caps the list at HIST_MAX, so storage never grows unbounded.
+  const HIST_KEY = "pmac_addr_history", HIST_MAX = 50, HIST_MAX_AGE = 180*86400; // 180 days
   let addrHistory = [];
-  try{ addrHistory = JSON.parse(localStorage.getItem(HIST_KEY)) || []; }catch(e){}
+  try{
+    const nowS = Math.floor(Date.now()/1000);
+    const raw = JSON.parse(localStorage.getItem(HIST_KEY)) || [];
+    addrHistory = raw
+      .map(e => typeof e === "string" ? {a:e, t:nowS} : e) // migrate old plain-string format
+      .filter(e => e && typeof e.a === "string" && (nowS - (e.t||0)) < HIST_MAX_AGE)
+      .slice(-HIST_MAX);
+    localStorage.setItem(HIST_KEY, JSON.stringify(addrHistory));
+  }catch(e){}
   function saveAddrHistory(valid){
-    const seen = new Set(addrHistory.map(a=>a.toLowerCase()));
+    const nowS = Math.floor(Date.now()/1000);
     for(const a of valid){
-      const k = a.toLowerCase();
-      if(!seen.has(k)){ seen.add(k); addrHistory.push(a); }
+      const i = addrHistory.findIndex(e => e.a.toLowerCase() === a.toLowerCase());
+      if(i >= 0) addrHistory.splice(i, 1); // re-using an address refreshes its timestamp
+      addrHistory.push({a, t:nowS});
     }
-    addrHistory = addrHistory.slice(-50);
+    addrHistory = addrHistory.slice(-HIST_MAX);
     try{ localStorage.setItem(HIST_KEY, JSON.stringify(addrHistory)); }catch(e){}
   }
   const ta = $("addrInput"), ghost = $("ghost");
@@ -410,8 +456,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const tok = (/[^,\s;]*$/.exec(v) || [""])[0];
       if(tok.length >= 2){
         const t = tok.toLowerCase();
-        const hit = addrHistory.find(a => a.toLowerCase().startsWith(t) && a.length > tok.length);
-        if(hit) ghostRemainder = hit.slice(tok.length);
+        // most recently used first
+        const hit = [...addrHistory].reverse().find(e => e.a.toLowerCase().startsWith(t) && e.a.length > tok.length);
+        if(hit) ghostRemainder = hit.a.slice(tok.length);
       }
     }
     ghost.innerHTML = '<span class="gh-hide">'+esc(v)+'</span><span class="gh-sug">'+esc(ghostRemainder)+'</span>';
@@ -465,6 +512,105 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return {records:out, truncated:true, reason:"reached the API's max offset (5,000) — narrow the time range to see older records"};
   }
 
+  // ---------- on-chain USDC deposits/withdrawals (Blockscout) ----------
+  // The Polymarket data API does not index deposits/withdrawals (they are plain
+  // USDC transfers, not market activity), so we read them from the chain and
+  // merge them in as DEPOSIT / WITHDRAWAL records.
+  const BLOCKSCOUT = "https://polygon.blockscout.com/api/v2";
+  const USDC_TOKENS = [
+    "0x2791bca1f2de4661ed88a30c99a7a9449aa84174", // USDC.e (bridged — what Polymarket settles in)
+    "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"  // native USDC
+  ];
+  // trading-infrastructure counterparties: transfers to/from these are trade
+  // settlements/redemptions already shown as activity records, not deposits
+  const INFRA_ADDRS = new Set([
+    "0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e", // CTF Exchange
+    "0xc5d563a36ae78145c45a50134d48a1215220f80a", // NegRisk CTF Exchange
+    "0xd91e80cf2e7be2e162c6513ced06f1dd0da35296", // NegRisk Adapter
+    "0x4d97dcd97ec945f40cf65f87097ace5ea0476045"  // Conditional Tokens
+  ]);
+  const INFRA_NAME_RE = /exchange|conditional ?tokens|negrisk|adapter|fee ?module|uma/i;
+  const DW_MAX_PAGES_PER_TOKEN = 3; // 50 transfers per page
+
+  async function fetchTransfers(addr, startTs){
+    const a = addr.toLowerCase();
+    const byTx = new Map();
+    let truncated = false;
+    for(const token of USDC_TOKENS){
+      let qs = "type=ERC-20&token=" + token;
+      for(let page=0; page<DW_MAX_PAGES_PER_TOKEN; page++){
+        const res = await fetchWithRetry(BLOCKSCOUT + "/addresses/" + addr + "/token-transfers?" + qs);
+        if(!res.ok) throw new Error("Blockscout HTTP " + res.status);
+        const j = await res.json();
+        let pastWindow = false;
+        for(const it of (j.items || [])){
+          const ts = Math.floor(new Date(it.timestamp).getTime()/1000);
+          if(startTs && ts < startTs){ pastWindow = true; break; }
+          const from = (it.from && it.from.hash || "").toLowerCase();
+          const other = from === a ? it.to : it.from;
+          const oh = (other && other.hash || "").toLowerCase();
+          if(INFRA_ADDRS.has(oh) || INFRA_NAME_RE.test(other && other.name || "")) continue;
+          const dec = Number(it.total && it.total.decimals) || 6;
+          const amt = Number(it.total && it.total.value || 0) / Math.pow(10, dec);
+          if(!amt) continue;
+          const g = byTx.get(it.transaction_hash) || {in:0, out:0, ts, inFrom:null, outTo:null};
+          if(from === a){ g.out += amt; g.outTo = other; } else { g.in += amt; g.inFrom = other; }
+          g.ts = Math.min(g.ts, ts);
+          byTx.set(it.transaction_hash, g);
+        }
+        if(pastWindow || !j.next_page_params) break;
+        if(page === DW_MAX_PAGES_PER_TOKEN - 1 && j.next_page_params) truncated = true;
+        qs = "type=ERC-20&token=" + token + "&" + new URLSearchParams(j.next_page_params).toString();
+      }
+    }
+    const out = [];
+    for(const [txh, g] of byTx){
+      const net = g.in - g.out;
+      let type, amt, other, via = "";
+      if(net > 0.005){ type = "DEPOSIT"; amt = net; other = g.inFrom; }
+      else if(net < -0.005){ type = "WITHDRAWAL"; amt = -net; other = g.outTo; }
+      else if(g.out > 0){ type = "WITHDRAWAL"; amt = g.out; other = g.outTo; via = " (via relay)"; } // pass-through
+      else continue;
+      const oname = other ? (other.name || short(other.hash)) : "?";
+      out.push({
+        proxyWallet: addr, timestamp: g.ts, type, size: amt, usdcSize: amt,
+        transactionHash: txh, price: 0, side: "", outcome: "", conditionId: "", slug: "",
+        title: (type === "DEPOSIT" ? "USDC deposit from " : "USDC withdrawal to ") + oname + via,
+        isTransfer: true
+      });
+    }
+    return {records: out, truncated};
+  }
+
+  // ---------- wallet contract type (Blockscout) ----------
+  const walletMeta = new Map(); // lowercase address -> label, cached across runs
+  let currentWallets = [];
+  async function fetchWalletMeta(addr){
+    const k = addr.toLowerCase();
+    if(walletMeta.has(k)) return walletMeta.get(k);
+    let label = "unknown";
+    try{
+      const res = await fetch(BLOCKSCOUT + "/addresses/" + addr);
+      if(res.ok){
+        const j = await res.json();
+        label = (j.implementations && j.implementations[0] && j.implementations[0].name)
+          || j.name
+          || (j.is_contract ? "Contract (unverified)" : "EOA (externally owned)");
+      }
+    }catch(e){}
+    walletMeta.set(k, label);
+    return label;
+  }
+  function renderWalletTags(){
+    const box = $("walletsBox");
+    box.innerHTML = currentWallets.map(a => {
+      const label = walletMeta.get(a.toLowerCase());
+      return '<span class="wallet-tag mono">' + esc(short(a))
+        + '<span class="wtype">' + esc(label || "…") + '</span></span>';
+    }).join("");
+    box.classList.toggle("active", currentWallets.length > 0);
+  }
+
   async function run(){
     if(fetching) return;
     const {valid, invalid} = parseAddresses($("addrInput").value);
@@ -484,9 +630,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     fetching = true;
     $("submitBtn").disabled = true;
     $("progressBox").classList.add("active");
-    ["summaryBox","resultsBar","tableWrap","jsonWrap","emptyBox"].forEach(id=>$(id).classList.remove("active"));
+    ["summaryBox","resultsBar","tableWrap","jsonWrap","emptyBox","walletsBox"].forEach(id=>$(id).classList.remove("active"));
     allRecords = []; pagesFetched = 0;
+    currentWallets = valid.slice();
     const notes = [];
+    const wantsDW = !params.type || params.type === "DEPOSIT" || params.type === "WITHDRAWAL";
 
     try{
       for(const addr of valid){
@@ -496,7 +644,21 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         });
         allRecords.push(...r.records);
         if(r.truncated) notes.push(short(addr) + ": partial results (" + r.reason + ")");
+        if(wantsDW){
+          $("progressText").textContent = short(addr) + " · checking on-chain USDC transfers…";
+          try{
+            const dw = await fetchTransfers(addr, params.start ? Number(params.start) : null);
+            let recs = dw.records;
+            if(params.type) recs = recs.filter(x => x.type === params.type);
+            allRecords.push(...recs);
+            if(dw.truncated) notes.push(short(addr) + ": deposits/withdrawals limited to the most recent " + (DW_MAX_PAGES_PER_TOKEN*50) + " transfers per token");
+          }catch(e){
+            notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + e.message + ")");
+          }
+        }
+        fetchWalletMeta(addr).then(renderWalletTags);
       }
+      renderWalletTags();
       allRecords.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       if(notes.length) errBox.textContent = notes.join(" · ");
       renderAll();
@@ -552,6 +714,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const q = $("searchBox").value.trim().toLowerCase();
     const from = dateBound("dateFrom", false), to = dateBound("dateTo", true);
     filteredRecords = allRecords.filter(r => {
+      if(dwOnly && r.type !== "DEPOSIT" && r.type !== "WITHDRAWAL") return false;
       if(comboMode === "combo" && r.isCombo !== true) return false;
       if(comboMode === "single" && r.isCombo === true) return false;
       if(typeFilter && (r.type||"") !== typeFilter) return false;
@@ -569,13 +732,67 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       : (a.timestamp||0)-(b.timestamp||0));
   }
 
+  // ---------- estimated trade fees (Gamma fee schedules, fetched lazily) ----------
+  // fee = rate × min(price, 1−price)^exponent × shares — the taker fee formula.
+  // Makers pay no fee on takerOnly schedules, so this is an upper-bound estimate.
+  const feeCache = new Map(); // lowercase conditionId -> {rate, exponent} | null (fee-free)
+  function computeFeeFor(r){
+    if(r.type !== "TRADE" || !r.conditionId) return null;
+    const s = feeCache.get(r.conditionId.toLowerCase());
+    if(s === undefined) return undefined; // schedule not fetched yet
+    if(!s) return 0;
+    const p = Number(r.price) || 0;
+    return s.rate * Math.pow(Math.min(p, 1-p), s.exponent) * (Number(r.size) || 0);
+  }
+  function feeCellText(r){
+    if(r.type !== "TRADE") return "—";
+    const f = computeFeeFor(r);
+    return f === undefined ? "…" : fmtUsd(f);
+  }
+  function refreshFeeCells(){
+    document.querySelectorAll("#tableBody .fee-cell").forEach(td => {
+      const r = filteredRecords[Number(td.dataset.i)];
+      if(r) td.textContent = feeCellText(r);
+    });
+  }
+  async function loadFeesFor(rows){
+    const need = [...new Set(rows
+      .filter(r => r.type === "TRADE" && r.conditionId && !feeCache.has(r.conditionId.toLowerCase()))
+      .map(r => r.conditionId))];
+    for(let i=0; i<need.length; i+=20){
+      const chunk = need.slice(i, i+20);
+      try{
+        const res = await fetch("https://gamma-api.polymarket.com/markets?"
+          + chunk.map(id => "condition_ids=" + encodeURIComponent(id)).join("&"));
+        if(res.ok){
+          const mkts = await res.json();
+          for(const m of (Array.isArray(mkts) ? mkts : [])){
+            if(!m.conditionId) continue;
+            let sch = m.feeSchedule;
+            if(typeof sch === "string"){ try{ sch = JSON.parse(sch); }catch(e){ sch = null; } }
+            feeCache.set(m.conditionId.toLowerCase(),
+              (m.feesEnabled && sch && Number(sch.rate) > 0)
+                ? {rate: Number(sch.rate), exponent: Number(sch.exponent) || 1}
+                : null);
+          }
+        }
+      }catch(e){}
+      // anything gamma didn't return is treated as fee-free rather than re-fetched forever
+      chunk.forEach(id => { const k = id.toLowerCase(); if(!feeCache.has(k)) feeCache.set(k, null); });
+    }
+    if(need.length) refreshFeeCells();
+  }
+
   function rowHtml(r, idx){
     const sideBadge = r.side === "BUY" ? '<span class="badge buy">BUY</span>'
                     : r.side === "SELL" ? '<span class="badge sell">SELL</span>'
                     : '<span class="badge neutral">—</span>';
-    const typeBadge = '<button type="button" class="badge neutral badge-btn" data-ft="' + esc(r.type||"") + '" title="Click to filter by this type">' + esc(r.type||"?") + '</button>'
+    const tcls = r.type === "DEPOSIT" ? "buy" : r.type === "WITHDRAWAL" ? "sell" : "neutral";
+    const typeBadge = '<button type="button" class="badge '+tcls+' badge-btn" data-ft="' + esc(r.type||"") + '" title="Click to filter by this type">' + esc(r.type||"?") + '</button>'
       + (r.isCombo === true ? ' <button type="button" class="badge combo badge-btn" data-fc="1" title="Click to show only combo records">COMBO</button>' : "");
-    const mkt = r.title
+    const mkt = r.isTransfer
+      ? '<div class="market-cell" data-i="'+idx+'"><span>'+esc(r.title)+'</span></div>'
+      : r.title
       ? '<div class="market-cell" data-i="'+idx+'">' + (r.icon ? '<img src="'+esc(r.icon)+'" alt="" loading="lazy">' : "")
         + '<a href="https://polymarket.com/event/'+esc(r.eventSlug||r.slug||"")+'" target="_blank" rel="noopener">'+esc(r.title)+'</a></div>'
       : '<div class="market-cell" data-i="'+idx+'"><span class="outcome">—</span></div>';
@@ -593,6 +810,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       + '<td class="num mono">'+fmtNum(r.size)+"</td>"
       + '<td class="num mono">'+(r.price!=null?Number(r.price).toFixed(3):"")+"</td>"
       + '<td class="num mono">'+fmtUsd(r.usdcSize)+"</td>"
+      + '<td class="num mono fee-cell" data-i="'+idx+'">'+feeCellText(r)+"</td>"
       + "<td>"+tx+"</td>"
       + "</tr>";
   }
@@ -604,6 +822,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const next = filteredRecords.slice(start, start+pageSize);
     body.insertAdjacentHTML("beforeend", next.map((r,i)=>rowHtml(r, start+i)).join(""));
     renderedCount += next.length;
+    loadFeesFor(next); // async; fills "…" fee cells once schedules arrive
     $("loadMoreRow").classList.toggle("active", renderedCount < filteredRecords.length);
     $("loadMoreBtn").textContent = "Show more (" + (filteredRecords.length-renderedCount).toLocaleString() + " remaining)";
   }
@@ -653,8 +872,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
   };
   function toCsv(rows){
-    const cols = ["timestamp","proxyWallet","type","side","title","outcome","size","price","usdcSize","transactionHash","conditionId","slug"];
-    return [cols.join(",")].concat(rows.map(r => cols.map(c => csvCell(r[c])).join(","))).join("\n");
+    const cols = ["timestamp","proxyWallet","type","side","title","outcome","size","price","usdcSize","feeEstimate","transactionHash","conditionId","slug"];
+    return [cols.join(",")].concat(rows.map(r => cols.map(c => {
+      if(c === "feeEstimate"){ const f = computeFeeFor(r); return csvCell(typeof f === "number" ? f.toFixed(6) : ""); }
+      return csvCell(r[c]);
+    }).join(","))).join("\n");
   }
 
   // ---------- hover tooltip (full market context + combo legs) ----------
@@ -846,6 +1068,44 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("sortArrow").textContent = sortDir === "desc" ? "▼" : "▲";
     refreshResults();
   });
+
+  // D/W quick-filter chip: deposits & withdrawals only
+  $("dwChip").addEventListener("click", ()=>{
+    dwOnly = !dwOnly;
+    $("dwChip").classList.toggle("on", dwOnly);
+    refreshResults();
+  });
+
+  // column show/hide menu
+  const COLS = ["Time","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"];
+  let hiddenCols = new Set();
+  try{ hiddenCols = new Set((JSON.parse(localStorage.getItem("pmac_hidden_cols"))||[]).filter(i => i>=0 && i<COLS.length)); }catch(e){}
+  const colStyle = document.createElement("style");
+  document.head.appendChild(colStyle);
+  function applyHiddenCols(){
+    colStyle.textContent = [...hiddenCols]
+      .map(i => ".table-wrap th:nth-child("+(i+1)+"),.table-wrap td:nth-child("+(i+1)+"){display:none;}")
+      .join("");
+    try{ localStorage.setItem("pmac_hidden_cols", JSON.stringify([...hiddenCols])); }catch(e){}
+  }
+  function buildColsMenu(){
+    $("colsMenu").innerHTML = COLS.map((c,i) =>
+      '<label class="cols-item"><input type="checkbox" data-col="'+i+'"'+(hiddenCols.has(i) ? "" : " checked")+'> '+esc(c)+'</label>'
+    ).join("");
+  }
+  $("colsBtn").addEventListener("click", e => {
+    e.stopPropagation();
+    if(!$("colsMenu").classList.contains("open")) buildColsMenu();
+    $("colsMenu").classList.toggle("open");
+  });
+  $("colsMenu").addEventListener("click", e => e.stopPropagation());
+  $("colsMenu").addEventListener("change", e => {
+    const i = Number(e.target.dataset.col);
+    if(e.target.checked) hiddenCols.delete(i); else hiddenCols.add(i);
+    applyHiddenCols();
+  });
+  document.addEventListener("click", ()=> $("colsMenu").classList.remove("open"));
+  applyHiddenCols();
 
   // active-filter chip for badge-click type filters
   function renderChips(){
