@@ -286,7 +286,7 @@ footer a{color:inherit;}
   const $ = id => document.getElementById(id);
   const API = "https://data-api.polymarket.com/activity";
   const PAGE_SIZE = 500;
-  const MAX_PAGES_PER_WALLET = 21; // API caps offset at 10000, so 21 pages (10,500 records) max
+  const MAX_PAGES_PER_WALLET = 11; // API rejects offset > 5000, so 11 pages (5,500 records) max
   const ROWS_PER_RENDER = 300;
 
   // ---------- theme (in-memory only) ----------
@@ -328,12 +328,24 @@ footer a{color:inherit;}
   }
 
   // ---------- fetching with limit=500 & offset pagination ----------
+  const sleep = ms => new Promise(r=>setTimeout(r, ms));
+  async function fetchWithRetry(url, tries=3){
+    for(let attempt=0; ; attempt++){
+      const res = await fetch(url);
+      if((res.status === 429 || res.status >= 500) && attempt < tries-1){
+        const ra = Number(res.headers.get("Retry-After"));
+        await sleep(ra > 0 ? ra*1000 : 1000 * Math.pow(2, attempt));
+        continue;
+      }
+      return res;
+    }
+  }
   async function fetchWallet(addr, params, onPage){
     const out = [];
     for(let page=0; page<MAX_PAGES_PER_WALLET; page++){
       const offset = page * PAGE_SIZE;
       const qs = new URLSearchParams({user:addr, limit:String(PAGE_SIZE), offset:String(offset), ...params});
-      const res = await fetch(API + "?" + qs.toString());
+      const res = await fetchWithRetry(API + "?" + qs.toString());
       if(!res.ok){
         let msg = "HTTP " + res.status;
         try{ const j = await res.json(); if(j && j.error) msg += ": " + j.error; }catch(e){}
@@ -347,7 +359,7 @@ footer a{color:inherit;}
       onPage(addr, page+1, out.length);
       if(!Array.isArray(rows) || rows.length < PAGE_SIZE) return {records:out, truncated:false};
     }
-    return {records:out, truncated:true, reason:"reached the API's max offset (10,000) — narrow the time range to see older records"};
+    return {records:out, truncated:true, reason:"reached the API's max offset (5,000) — narrow the time range to see older records"};
   }
 
   async function run(){
@@ -394,21 +406,26 @@ footer a{color:inherit;}
   }
 
   // ---------- rendering ----------
-  function renderAll(){
-    applySearch();
-    // summary
-    const vol = allRecords.reduce((s,r)=>s+(Number(r.usdcSize)||0),0);
-    const buys = allRecords.filter(r=>r.side==="BUY").length;
-    const sells = allRecords.filter(r=>r.side==="SELL").length;
-    const mkts = new Set(allRecords.map(r=>r.conditionId).filter(Boolean)).size;
-    const combos = allRecords.filter(r=>r.isCombo === true).length;
+  function renderSummary(){
+    const rows = filteredRecords;
+    const vol = rows.reduce((s,r)=>s+(Number(r.usdcSize)||0),0);
+    const buys = rows.filter(r=>r.side==="BUY").length;
+    const sells = rows.filter(r=>r.side==="SELL").length;
+    const mkts = new Set(rows.map(r=>r.conditionId).filter(Boolean)).size;
+    const combos = rows.filter(r=>r.isCombo === true).length;
     $("stCombos").textContent = combos.toLocaleString();
-    $("stRecords").textContent = allRecords.length.toLocaleString();
+    $("stRecords").textContent = rows.length.toLocaleString()
+      + (rows.length !== allRecords.length ? " / " + allRecords.length.toLocaleString() : "");
     $("stVolume").textContent = "$" + fmtUsd(vol);
     $("stBuys").textContent = buys.toLocaleString();
     $("stSells").textContent = sells.toLocaleString();
     $("stMarkets").textContent = mkts.toLocaleString();
     $("stPages").textContent = pagesFetched.toLocaleString();
+  }
+
+  function renderAll(){
+    applySearch();
+    renderSummary();
 
     if(!allRecords.length){
       $("emptyBox").classList.add("active");
@@ -510,7 +527,12 @@ footer a{color:inherit;}
     a.href = url; a.download = name; a.click();
     setTimeout(()=>URL.revokeObjectURL(url), 5000);
   }
-  const csvCell = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const csvCell = v => {
+    let s = String(v ?? "");
+    // guard against spreadsheet formula injection, but leave plain negative numbers alone
+    if(/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s)) s = "'" + s;
+    return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  };
   function toCsv(rows){
     const cols = ["timestamp","proxyWallet","type","side","title","outcome","size","price","usdcSize","transactionHash","conditionId","slug"];
     return [cols.join(",")].concat(rows.map(r => cols.map(c => csvCell(r[c])).join(","))).join("\n");
@@ -563,6 +585,8 @@ footer a{color:inherit;}
   function legsHtml(legs, parts){
     if(!legs || !legs.length) return '<div class="tt-meta">No leg detail returned.</div>';
     const sorted = legs.slice().sort((a,b)=>(a.leg_index??0)-(b.leg_index??0));
+    // only trust the title-split fallback when it produced exactly one part per leg
+    if(parts && parts.length !== sorted.length) parts = null;
     return '<ul class="tt-list">' + sorted.map((l,i) => {
       const name = titleCache.get((l.leg_condition_id||"").toLowerCase())
         || (parts && parts[i])
@@ -673,12 +697,14 @@ footer a{color:inherit;}
     clearTimeout(searchTimer);
     searchTimer = setTimeout(()=>{
       applySearch();
+      renderSummary();
       if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
     }, 200);
   });
   $("comboSel").addEventListener("change", ()=>{
     if(!allRecords.length) return;
     applySearch();
+    renderSummary();
     if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
   });
   $("dlJson").addEventListener("click", ()=>download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2)));
