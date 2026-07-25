@@ -215,11 +215,16 @@ table.resized td{overflow:hidden; text-overflow:ellipsis;}
 button.badge-btn{border:none; cursor:pointer; font-family:inherit; line-height:1.5;}
 button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
-/* wallet contract-type tags */
-.wallets{display:none; gap:8px; flex-wrap:wrap;}
+/* wallet tags + search history row: latest on the left, older to the right */
+.wallets{display:none; gap:8px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:2px;}
 .wallets.active{display:flex;}
-.wallet-tag{border:1px solid var(--border); background:var(--card); padding:4px 10px; font-size:12px; color:var(--muted-foreground);}
+.wallet-tag{border:1px solid var(--border); background:var(--card); padding:4px 10px; font-size:12px; color:var(--muted-foreground); flex-shrink:0; font-family:'Geist Mono',ui-monospace,monospace;}
 .wallet-tag .wtype{color:var(--primary); font-weight:500; margin-left:6px;}
+.wallet-tag.cur{border-color:var(--primary);}
+button.wallet-tag.hist{cursor:pointer;}
+button.wallet-tag.hist:hover{border-color:var(--primary); color:var(--foreground);}
+button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
+.wallets .sep{color:var(--muted-foreground); font-size:12px; align-self:center; flex-shrink:0;}
 
 /* active D/W chip */
 .chip.on{background:var(--primary); color:var(--primary-foreground); border-style:solid; border-color:var(--primary);}
@@ -453,15 +458,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       .slice(-HIST_MAX);
     localStorage.setItem(HIST_KEY, JSON.stringify(addrHistory));
   }catch(e){}
+  function persistHistory(){
+    try{ localStorage.setItem(HIST_KEY, JSON.stringify(addrHistory)); }catch(e){}
+  }
   function saveAddrHistory(valid){
     const nowS = Math.floor(Date.now()/1000);
     for(const a of valid){
       const i = addrHistory.findIndex(e => e.a.toLowerCase() === a.toLowerCase());
+      const label = i >= 0 ? addrHistory[i].label : undefined;
       if(i >= 0) addrHistory.splice(i, 1); // re-using an address refreshes its timestamp
-      addrHistory.push({a, t:nowS});
+      addrHistory.push({a, t:nowS, label});
     }
     addrHistory = addrHistory.slice(-HIST_MAX);
-    try{ localStorage.setItem(HIST_KEY, JSON.stringify(addrHistory)); }catch(e){}
+    persistHistory();
   }
   const ta = $("addrInput"), ghost = $("ghost");
   let ghostRemainder = "";
@@ -741,12 +750,34 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
   function renderWalletTags(){
     const box = $("walletsBox");
-    box.innerHTML = currentWallets.map(a => {
+    // current search first (left), then older searches, most recent first
+    const cur = currentWallets.map(a => {
       const label = walletMeta.get(a.toLowerCase());
-      return '<span class="wallet-tag mono">' + esc(short(a))
+      return '<span class="wallet-tag cur">' + esc(short(a))
         + '<span class="wtype">' + esc(label || "…") + '</span></span>';
-    }).join("");
-    box.classList.toggle("active", currentWallets.length > 0);
+    });
+    const curSet = new Set(currentWallets.map(a => a.toLowerCase()));
+    const hist = [...addrHistory].reverse()
+      .filter(e => !curSet.has(e.a.toLowerCase()))
+      .slice(0, 12)
+      .map(e => {
+        const label = e.label || walletMeta.get(e.a.toLowerCase());
+        return '<button type="button" class="wallet-tag hist" data-addr="' + esc(e.a)
+          + '" title="Search this address again">' + esc(short(e.a))
+          + (label ? '<span class="wtype">' + esc(label) + '</span>' : '') + '</button>';
+      });
+    box.innerHTML = cur.join("") + (cur.length && hist.length ? '<span class="sep">·</span>' : "") + hist.join("");
+    box.classList.toggle("active", cur.length + hist.length > 0);
+    // resolve missing contract-type labels for visible history chips, then persist
+    for(const e of [...addrHistory].reverse().slice(0, 12)){
+      if(e.label) continue;
+      fetchWalletMeta(e.a).then(label => {
+        if(e.label === label) return;
+        e.label = label;
+        persistHistory();
+        renderWalletTags();
+      });
+    }
   }
 
   async function run(){
@@ -774,6 +805,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     ["summaryBox","resultsBar","tableWrap","jsonWrap","emptyBox","walletsBox"].forEach(id=>$(id).classList.remove("active"));
     allRecords = []; pagesFetched = 0;
     currentWallets = valid.slice();
+    renderWalletTags();
     const notes = [];
 
     try{
@@ -1423,6 +1455,16 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   });
   // one download button whose format follows the active tab
   window.__pmacDebug = {fetchTransfersViaLogs}; // console access for diagnostics
+
+  // clicking an older search chip re-runs that address
+  $("walletsBox").addEventListener("click", e => {
+    const b = e.target.closest(".wallet-tag.hist");
+    if(!b || fetching) return;
+    $("addrInput").value = b.dataset.addr;
+    updateGhost();
+    run();
+  });
+  renderWalletTags(); // show search history on load
 
   $("dlBtn").addEventListener("click", ()=>{
     if($("tabJson").classList.contains("on"))
