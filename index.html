@@ -172,6 +172,49 @@ th.num{text-align:right;}
 .empty.active{display:block;}
 footer{margin-top:8px; font-size:12px; color:var(--muted-foreground);}
 footer a{color:inherit;}
+
+/* address autocomplete ghost */
+.ta-wrap{position:relative;}
+.ghost{
+  position:absolute; inset:0; padding:12px; overflow:hidden; pointer-events:none;
+  font-family:'Geist Mono',ui-monospace,monospace; font-size:13px; line-height:1.6;
+  white-space:pre-wrap; word-break:break-all;
+}
+.ghost .gh-hide{color:transparent;}
+.ghost .gh-sug{color:var(--muted-foreground); opacity:.75;}
+#addrInput{word-break:break-all;}
+
+/* segmented control */
+.seg{display:inline-flex; border:1px solid var(--border); background:var(--card);}
+.seg-btn{height:30px; padding:0 12px; font-size:13px; font-family:inherit; border:none; background:transparent; color:var(--muted-foreground); cursor:pointer;}
+.seg-btn + .seg-btn{border-left:1px solid var(--border);}
+.seg-btn.on{background:var(--primary); color:var(--primary-foreground);}
+.toolbar .seg .seg-btn{height:32px;}
+.seg-label{font-size:12px; color:var(--muted-foreground);}
+
+/* results bar extras */
+.rb-left{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+input[type="date"]{height:30px; border:1px solid var(--border); background:var(--card); color:var(--foreground); font-family:inherit; font-size:12px; padding:0 8px; color-scheme:light dark;}
+.chips{display:inline-flex; gap:6px;}
+.chip{height:30px; border:1px dashed var(--primary); color:var(--primary); background:transparent; font-size:12px; padding:0 10px; cursor:pointer; font-family:inherit;}
+.chip:hover{background:rgba(22,93,252,.08);}
+
+/* sortable + resizable columns */
+th.sortable{cursor:pointer; user-select:none;}
+th.sortable:hover{color:var(--foreground);}
+.col-resizer{position:absolute; top:0; right:-4px; width:8px; height:100%; cursor:col-resize; z-index:2;}
+.col-resizer:hover, .col-resizer.dragging{background:var(--primary); opacity:.5;}
+table.resized td{overflow:hidden; text-overflow:ellipsis;}
+
+/* clickable type badges */
+button.badge-btn{border:none; cursor:pointer; font-family:inherit; line-height:1.5;}
+button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
+
+/* tx copy button */
+.copy-btn{margin-left:6px; border:1px solid var(--border); background:transparent; color:var(--muted-foreground); cursor:pointer; font-size:11px; padding:1px 6px; font-family:inherit;}
+.copy-btn:hover{color:var(--primary); border-color:var(--primary);}
+.copy-btn.ok{color:var(--success); border-color:var(--success);}
+
 @media (max-width:640px){ .stat .value{font-size:15px;} input[type="search"]{width:130px;} }
 </style>
 </head>
@@ -185,7 +228,7 @@ footer a{color:inherit;}
     <div class="header">
       <div>
         <h1>Polymarket Activity Checker</h1>
-        <p class="sub">Paste one or more addresses, separated by commas or new lines.</p>
+        <p class="sub">Paste one or more addresses, separated by commas or new lines. Previously used addresses autocomplete — press Tab to accept.</p>
       </div>
       <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
         <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -194,7 +237,10 @@ footer a{color:inherit;}
     </div>
 
     <div class="card">
-      <textarea id="addrInput" placeholder="0x..." spellcheck="false"></textarea>
+      <div class="ta-wrap">
+        <div class="ghost" id="ghost" aria-hidden="true"></div>
+        <textarea id="addrInput" placeholder="0x..." spellcheck="false"></textarea>
+      </div>
       <div class="toolbar">
         <div class="toolbar-left">
           <select id="typeSel" aria-label="Activity type">
@@ -211,11 +257,11 @@ footer a{color:inherit;}
             <option value="BUY">Buy</option>
             <option value="SELL">Sell</option>
           </select>
-          <select id="comboSel" aria-label="Combo filter">
-            <option value="">All predictions</option>
-            <option value="single">Only single prediction</option>
-            <option value="combo">Only combo</option>
-          </select>
+          <div class="seg" id="comboSeg" role="group" aria-label="Prediction type">
+            <button type="button" class="seg-btn on" data-v="">All</button>
+            <button type="button" class="seg-btn" data-v="single">Single</button>
+            <button type="button" class="seg-btn" data-v="combo">Combo</button>
+          </div>
           <select id="timeSel" aria-label="Time range">
             <option value="">All time</option>
             <option value="86400">Last 24 hours</option>
@@ -223,7 +269,6 @@ footer a{color:inherit;}
             <option value="2592000">Last 30 days</option>
             <option value="7776000">Last 90 days</option>
           </select>
-          <span class="hint">Fetched in pages of 500 via <span class="mono">limit=500&amp;offset=N</span></span>
         </div>
         <button class="btn btn-primary" id="submitBtn">Check activity</button>
       </div>
@@ -243,9 +288,21 @@ footer a{color:inherit;}
     </div>
 
     <div class="results-bar" id="resultsBar">
-      <div class="tabs" role="tablist">
-        <button class="tab on" id="tabTable" role="tab">Table</button>
-        <button class="tab" id="tabJson" role="tab">JSON</button>
+      <div class="rb-left">
+        <div class="tabs" role="tablist">
+          <button class="tab on" id="tabTable" role="tab">Table</button>
+          <button class="tab" id="tabJson" role="tab">JSON</button>
+        </div>
+        <span class="seg-label">Date</span>
+        <input type="date" id="dateFrom" aria-label="From date" title="Show records from this date">
+        <input type="date" id="dateTo" aria-label="To date" title="Show records up to this date">
+        <select id="rowsSel" aria-label="Rows to display" title="Rows to display">
+          <option value="25">25 rows</option>
+          <option value="50">50 rows</option>
+          <option value="100" selected>100 rows</option>
+          <option value="200">200 rows</option>
+        </select>
+        <span id="chips" class="chips"></span>
       </div>
       <div class="results-actions">
         <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
@@ -258,7 +315,7 @@ footer a{color:inherit;}
       <table>
         <thead>
           <tr>
-            <th>Time</th><th>Wallet</th><th>Type</th><th>Market</th><th>Outcome</th>
+            <th class="sortable" id="thTime" title="Sort by date">Time <span id="sortArrow">▼</span></th><th>Wallet</th><th>Type</th><th>Market</th><th>Outcome</th>
             <th>Side</th><th class="num">Size</th><th class="num">Price</th><th class="num">USDC</th><th>Tx</th>
           </tr>
         </thead>
@@ -287,7 +344,7 @@ footer a{color:inherit;}
   const API = "https://data-api.polymarket.com/activity";
   const PAGE_SIZE = 500;
   const MAX_PAGES_PER_WALLET = 11; // API rejects offset > 5000, so 11 pages (5,500 records) max
-  const ROWS_PER_RENDER = 300;
+  let pageSize = 100;
 
   // ---------- theme (in-memory only) ----------
   let dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -305,6 +362,9 @@ footer a{color:inherit;}
   let renderedCount = 0;
   let pagesFetched = 0;
   let fetching = false;
+  let sortDir = "desc";   // Time column sort direction
+  let typeFilter = "";    // client-side filter set by clicking a type badge
+  let comboMode = "";     // "" | "single" | "combo"
 
   // ---------- helpers ----------
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -326,6 +386,49 @@ footer a{color:inherit;}
     }
     return {valid, invalid};
   }
+
+  // ---------- address history + inline autocomplete (Tab to accept) ----------
+  const HIST_KEY = "pmac_addr_history";
+  let addrHistory = [];
+  try{ addrHistory = JSON.parse(localStorage.getItem(HIST_KEY)) || []; }catch(e){}
+  function saveAddrHistory(valid){
+    const seen = new Set(addrHistory.map(a=>a.toLowerCase()));
+    for(const a of valid){
+      const k = a.toLowerCase();
+      if(!seen.has(k)){ seen.add(k); addrHistory.push(a); }
+    }
+    addrHistory = addrHistory.slice(-50);
+    try{ localStorage.setItem(HIST_KEY, JSON.stringify(addrHistory)); }catch(e){}
+  }
+  const ta = $("addrInput"), ghost = $("ghost");
+  let ghostRemainder = "";
+  function updateGhost(){
+    const v = ta.value;
+    ghostRemainder = "";
+    // only suggest while the caret sits at the very end of the input
+    if(ta.selectionStart === v.length && ta.selectionEnd === v.length){
+      const tok = (/[^,\s;]*$/.exec(v) || [""])[0];
+      if(tok.length >= 2){
+        const t = tok.toLowerCase();
+        const hit = addrHistory.find(a => a.toLowerCase().startsWith(t) && a.length > tok.length);
+        if(hit) ghostRemainder = hit.slice(tok.length);
+      }
+    }
+    ghost.innerHTML = '<span class="gh-hide">'+esc(v)+'</span><span class="gh-sug">'+esc(ghostRemainder)+'</span>';
+    ghost.scrollTop = ta.scrollTop;
+  }
+  ta.addEventListener("input", updateGhost);
+  ta.addEventListener("keyup", updateGhost);
+  ta.addEventListener("click", updateGhost);
+  ta.addEventListener("blur", ()=>{ ghostRemainder=""; ghost.innerHTML=""; });
+  ta.addEventListener("scroll", ()=>{ ghost.scrollTop = ta.scrollTop; });
+  ta.addEventListener("keydown", e => {
+    if(e.key === "Tab" && ghostRemainder){
+      e.preventDefault();
+      ta.value += ghostRemainder;
+      updateGhost();
+    }
+  });
 
   // ---------- fetching with limit=500 & offset pagination ----------
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
@@ -369,6 +472,7 @@ footer a{color:inherit;}
     errBox.textContent = "";
     if(invalid.length) errBox.textContent = "Skipping invalid address" + (invalid.length>1?"es":"") + ": " + invalid.slice(0,3).join(", ") + (invalid.length>3?" …":"");
     if(!valid.length){ errBox.textContent = "Enter at least one valid 0x address (40 hex characters)."; return; }
+    saveAddrHistory(valid);
 
     // build shared params
     const params = {};
@@ -437,32 +541,47 @@ footer a{color:inherit;}
     showTable();
   }
 
+  function dateBound(id, endOfDay){
+    const v = $(id).value;
+    if(!v) return null;
+    const t = new Date(v + (endOfDay ? "T23:59:59.999" : "T00:00:00")).getTime();
+    return isNaN(t) ? null : Math.floor(t/1000);
+  }
+
   function applySearch(){
     const q = $("searchBox").value.trim().toLowerCase();
-    const combo = $("comboSel").value; // "" | "single" | "combo"
+    const from = dateBound("dateFrom", false), to = dateBound("dateTo", true);
     filteredRecords = allRecords.filter(r => {
-      if(combo === "combo" && r.isCombo !== true) return false;
-      if(combo === "single" && r.isCombo === true) return false;
+      if(comboMode === "combo" && r.isCombo !== true) return false;
+      if(comboMode === "single" && r.isCombo === true) return false;
+      if(typeFilter && (r.type||"") !== typeFilter) return false;
+      const ts = r.timestamp || 0;
+      if(from != null && ts < from) return false;
+      if(to != null && ts > to) return false;
       if(!q) return true;
       return (r.title||"").toLowerCase().includes(q) ||
              (r.slug||"").toLowerCase().includes(q) ||
              (r.outcome||"").toLowerCase().includes(q) ||
              (r.type||"").toLowerCase().includes(q);
     });
+    filteredRecords.sort((a,b) => sortDir === "desc"
+      ? (b.timestamp||0)-(a.timestamp||0)
+      : (a.timestamp||0)-(b.timestamp||0));
   }
 
   function rowHtml(r, idx){
     const sideBadge = r.side === "BUY" ? '<span class="badge buy">BUY</span>'
                     : r.side === "SELL" ? '<span class="badge sell">SELL</span>'
                     : '<span class="badge neutral">—</span>';
-    const typeBadge = '<span class="badge neutral">' + esc(r.type||"?") + '</span>'
-      + (r.isCombo === true ? ' <span class="badge combo">COMBO</span>' : "");
+    const typeBadge = '<button type="button" class="badge neutral badge-btn" data-ft="' + esc(r.type||"") + '" title="Click to filter by this type">' + esc(r.type||"?") + '</button>'
+      + (r.isCombo === true ? ' <button type="button" class="badge combo badge-btn" data-fc="1" title="Click to show only combo records">COMBO</button>' : "");
     const mkt = r.title
       ? '<div class="market-cell" data-i="'+idx+'">' + (r.icon ? '<img src="'+esc(r.icon)+'" alt="" loading="lazy">' : "")
         + '<a href="https://polymarket.com/event/'+esc(r.eventSlug||r.slug||"")+'" target="_blank" rel="noopener">'+esc(r.title)+'</a></div>'
       : '<div class="market-cell" data-i="'+idx+'"><span class="outcome">—</span></div>';
     const tx = r.transactionHash
       ? '<a class="tx-link mono" href="https://polygonscan.com/tx/'+esc(r.transactionHash)+'" target="_blank" rel="noopener">'+esc(r.transactionHash.slice(0,10))+'…</a>'
+        + '<button type="button" class="copy-btn" data-tx="'+esc(r.transactionHash)+'" title="Copy full transaction hash" aria-label="Copy full transaction hash">⧉</button>'
       : "";
     return "<tr>"
       + '<td class="time-cell mono">'+fmtTime(r.timestamp||0)+"</td>"
@@ -482,7 +601,7 @@ footer a{color:inherit;}
     const body = $("tableBody");
     if(reset){ body.innerHTML=""; renderedCount=0; hideTooltip(); }
     const start = renderedCount;
-    const next = filteredRecords.slice(start, start+ROWS_PER_RENDER);
+    const next = filteredRecords.slice(start, start+pageSize);
     body.insertAdjacentHTML("beforeend", next.map((r,i)=>rowHtml(r, start+i)).join(""));
     renderedCount += next.length;
     $("loadMoreRow").classList.toggle("active", renderedCount < filteredRecords.length);
@@ -692,20 +811,121 @@ footer a{color:inherit;}
   $("tabTable").addEventListener("click", showTable);
   $("tabJson").addEventListener("click", showJson);
   $("loadMoreBtn").addEventListener("click", ()=>renderTableChunk(false));
-  let searchTimer;
-  $("searchBox").addEventListener("input", ()=>{
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(()=>{
-      applySearch();
-      renderSummary();
-      if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
-    }, 200);
-  });
-  $("comboSel").addEventListener("change", ()=>{
+  function refreshResults(){
     if(!allRecords.length) return;
     applySearch();
     renderSummary();
+    $("emptyBox").classList.toggle("active", !filteredRecords.length);
     if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
+  }
+
+  let searchTimer;
+  $("searchBox").addEventListener("input", ()=>{
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(refreshResults, 200);
+  });
+
+  // segmented single/combo filter (also driven by clicking a COMBO badge)
+  function setComboMode(v){
+    comboMode = v;
+    document.querySelectorAll("#comboSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+    refreshResults();
+  }
+  document.querySelectorAll("#comboSeg .seg-btn").forEach(b =>
+    b.addEventListener("click", () => setComboMode(b.dataset.v)));
+
+  // date range + rows-per-page + Time sort
+  $("dateFrom").addEventListener("change", refreshResults);
+  $("dateTo").addEventListener("change", refreshResults);
+  $("rowsSel").addEventListener("change", ()=>{
+    pageSize = Number($("rowsSel").value) || 100;
+    if(allRecords.length && !$("tabJson").classList.contains("on")) renderTableChunk(true);
+  });
+  $("thTime").addEventListener("click", ()=>{
+    sortDir = sortDir === "desc" ? "asc" : "desc";
+    $("sortArrow").textContent = sortDir === "desc" ? "▼" : "▲";
+    refreshResults();
+  });
+
+  // active-filter chip for badge-click type filters
+  function renderChips(){
+    $("chips").innerHTML = typeFilter
+      ? '<button type="button" class="chip" title="Clear this filter">Type: ' + esc(typeFilter) + ' ×</button>'
+      : "";
+  }
+  $("chips").addEventListener("click", e => {
+    if(e.target.closest(".chip")){ typeFilter = ""; renderChips(); refreshResults(); }
+  });
+
+  // copy Tx hash + clickable type/combo badges (event delegation)
+  async function copyText(text, btn){
+    let ok = false;
+    try{ await navigator.clipboard.writeText(text); ok = true; }
+    catch(e){
+      const t = document.createElement("textarea");
+      t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+      document.body.appendChild(t); t.select();
+      try{ ok = document.execCommand("copy"); }catch(_){}
+      t.remove();
+    }
+    btn.textContent = ok ? "✓" : "✕";
+    btn.classList.toggle("ok", ok);
+    setTimeout(()=>{ btn.textContent = "⧉"; btn.classList.remove("ok"); }, 1200);
+  }
+  tbodyEl.addEventListener("click", e => {
+    const cp = e.target.closest(".copy-btn");
+    if(cp){ copyText(cp.dataset.tx, cp); return; }
+    const bb = e.target.closest(".badge-btn");
+    if(!bb) return;
+    if(bb.dataset.fc){ setComboMode(comboMode === "combo" ? "" : "combo"); }
+    else if(bb.dataset.ft){
+      typeFilter = typeFilter === bb.dataset.ft ? "" : bb.dataset.ft;
+      renderChips();
+      refreshResults();
+    }
+  });
+
+  // ---------- resizable columns (drag edge; double-click edge to reset) ----------
+  const tableEl = document.querySelector("table");
+  const headerCells = Array.from(tableEl.querySelectorAll("thead th"));
+  function freezeWidths(){
+    if(tableEl.style.tableLayout === "fixed") return;
+    headerCells.forEach(c => c.style.width = c.getBoundingClientRect().width + "px");
+    tableEl.style.tableLayout = "fixed";
+    tableEl.classList.add("resized");
+  }
+  function resetColumns(){
+    tableEl.style.tableLayout = "";
+    tableEl.classList.remove("resized");
+    headerCells.forEach(c => c.style.width = "");
+  }
+  headerCells.forEach(th => {
+    const h = document.createElement("span");
+    h.className = "col-resizer";
+    h.title = "Drag to resize · double-click to reset";
+    th.appendChild(h);
+    h.addEventListener("click", e => e.stopPropagation()); // don't trigger sort
+    h.addEventListener("dblclick", e => { e.preventDefault(); e.stopPropagation(); resetColumns(); });
+    h.addEventListener("pointerdown", e => {
+      e.preventDefault(); e.stopPropagation();
+      freezeWidths();
+      const startX = e.clientX, startW = th.getBoundingClientRect().width;
+      h.classList.add("dragging");
+      h.setPointerCapture(e.pointerId);
+      const move = ev => { th.style.width = Math.max(48, startW + ev.clientX - startX) + "px"; };
+      const up = ev => {
+        h.removeEventListener("pointermove", move);
+        h.removeEventListener("pointerup", up);
+        h.removeEventListener("pointercancel", up);
+        try{ h.releasePointerCapture(ev.pointerId); }catch(_){}
+        h.classList.remove("dragging");
+        document.body.style.cursor = "";
+      };
+      h.addEventListener("pointermove", move);
+      h.addEventListener("pointerup", up);
+      h.addEventListener("pointercancel", up);
+      document.body.style.cursor = "col-resize";
+    });
   });
   $("dlJson").addEventListener("click", ()=>download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2)));
   $("dlCsv").addEventListener("click", ()=>download("polymarket-activity.csv","text/csv",toCsv(filteredRecords)));
