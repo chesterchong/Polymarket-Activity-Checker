@@ -763,9 +763,13 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
         + '<span class="wtype">' + esc(label || "…") + '</span></span>';
     });
     const curSet = new Set(currentWallets.map(a => a.toLowerCase()));
+    // at most 4 chips on the row in total (current search included): a new search
+    // enters on the left and the oldest visible chip drops off. Older addresses
+    // stay in storage for Tab-autocomplete.
+    const MAX_CHIPS = 4;
     const hist = [...addrHistory].reverse()
       .filter(e => !curSet.has(e.a.toLowerCase()))
-      .slice(0, 4) // keep the row on one line — more chips would force a scrollbar
+      .slice(0, Math.max(0, MAX_CHIPS - cur.length))
       .map(e => {
         const label = e.label || walletMeta.get(e.a.toLowerCase());
         return '<button type="button" class="wallet-tag hist" data-addr="' + esc(e.a)
