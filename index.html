@@ -295,7 +295,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
 
     <div class="summary" id="summaryBox">
       <div class="stat"><div class="label">Records</div><div class="value" id="stRecords">–</div></div>
-      <div class="stat"><div class="label">Volume (USDC)</div><div class="value" id="stVolume">–</div></div>
+      <div class="stat" title="Sum of trade sizes in view (Polymarket trading volume — excludes deposits, withdrawals, rewards, redemptions, and rebates)"><div class="label">Volume (USDC)</div><div class="value" id="stVolume">–</div></div>
       <div class="stat"><div class="label">Buys</div><div class="value" id="stBuys">–</div></div>
       <div class="stat"><div class="label">Sells</div><div class="value" id="stSells">–</div></div>
       <div class="stat"><div class="label">Markets</div><div class="value" id="stMarkets">–</div></div>
@@ -924,7 +924,9 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
   // ---------- rendering ----------
   function renderSummary(){
     const rows = filteredRecords;
-    const vol = rows.reduce((s,r)=>s+(Number(r.usdcSize)||0),0);
+    // Polymarket trading volume = sum of TRADE sizes (matches leaderboard vol),
+    // not usdcSize across all activity types (deposits/rewards/redeems/etc.)
+    const vol = rows.reduce((s,r)=>s+(r.type==="TRADE" ? Number(r.size)||0 : 0),0);
     const buys = rows.filter(r=>r.side==="BUY").length;
     const sells = rows.filter(r=>r.side==="SELL").length;
     const mkts = new Set(rows.map(r=>r.conditionId).filter(Boolean)).size;
