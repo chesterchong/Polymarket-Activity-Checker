@@ -398,7 +398,8 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
   const $ = id => document.getElementById(id);
   const API = "https://data-api.polymarket.com/activity";
   const PAGE_SIZE = 500;
-  const MAX_PAGES_PER_WALLET = 11; // API rejects offset > 5000, so 11 pages (5,500 records) max
+  const MAX_PAGES_PER_WALLET = 11; // API rejects offset > 5000; after 11 pages we restart the window with an end= time cursor
+  const MAX_RECORDS_PER_WALLET = 50000; // absolute safety cap across all cursor windows
   let pageSize = 100;
 
   // ---------- theme (in-memory only) ----------
@@ -522,26 +523,50 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       return res;
     }
   }
+  // The API rejects offset > 5000, so one offset run only covers the most recent
+  // ~5,500 records. To go deeper we restart the run with end= set to the oldest
+  // timestamp fetched so far (end is inclusive, so the boundary page overlaps —
+  // the seen-set dedupes it) and keep walking back in time until the feed is done.
   async function fetchWallet(addr, params, onPage){
     const out = [];
-    for(let page=0; page<MAX_PAGES_PER_WALLET; page++){
-      const offset = page * PAGE_SIZE;
-      const qs = new URLSearchParams({user:addr, limit:String(PAGE_SIZE), offset:String(offset), ...params});
-      const res = await fetchWithRetry(API + "?" + qs.toString());
-      if(!res.ok){
-        let msg = "HTTP " + res.status;
-        try{ const j = await res.json(); if(j && j.error) msg += ": " + j.error; }catch(e){}
-        if(page === 0) throw new Error(msg);
-        // mid-pagination failure: keep what we have, note it
-        return {records:out, truncated:true, reason:msg};
+    const seen = new Set();
+    let endCursor = params.end ? Number(params.end) : null;
+    let totalPages = 0;
+    for(;;){
+      let windowDone = false;
+      for(let page=0; page<MAX_PAGES_PER_WALLET; page++){
+        const qp = {user:addr, limit:String(PAGE_SIZE), offset:String(page*PAGE_SIZE), ...params};
+        if(endCursor) qp.end = String(endCursor);
+        const res = await fetchWithRetry(API + "?" + new URLSearchParams(qp).toString());
+        if(!res.ok){
+          let msg = "HTTP " + res.status;
+          try{ const j = await res.json(); if(j && j.error) msg += ": " + j.error; }catch(e){}
+          if(!out.length) throw new Error(msg);
+          // mid-pagination failure: keep what we have, note it
+          return {records:out, truncated:true, reason:msg};
+        }
+        const rows = await res.json();
+        pagesFetched++; totalPages++;
+        if(Array.isArray(rows)){
+          for(const r of rows){
+            const k = (r.transactionHash||"") + ":" + r.type + ":" + (r.asset||"") + ":" + (r.timestamp||0) + ":" + (r.size||0) + ":" + (r.price||0);
+            if(seen.has(k)) continue;
+            seen.add(k);
+            out.push(r);
+          }
+        }
+        onPage(addr, totalPages, out.length);
+        if(!Array.isArray(rows) || rows.length < PAGE_SIZE){ windowDone = true; break; }
       }
-      const rows = await res.json();
-      pagesFetched++;
-      if(Array.isArray(rows)) out.push(...rows);
-      onPage(addr, page+1, out.length);
-      if(!Array.isArray(rows) || rows.length < PAGE_SIZE) return {records:out, truncated:false};
+      if(windowDone) return {records:out, truncated:false};
+      if(out.length >= MAX_RECORDS_PER_WALLET)
+        return {records:out, truncated:true, reason:"stopped after " + out.length.toLocaleString() + " records — narrow the time range to see older ones"};
+      const oldest = out.reduce((m,r)=>Math.min(m, r.timestamp||m), Infinity);
+      // stall guard: >5,500 records sharing one timestamp would loop forever
+      if(!isFinite(oldest) || (endCursor !== null && oldest >= endCursor))
+        return {records:out, truncated:true, reason:"could not page past " + fmtTime(oldest) + " — narrow the time range to see older records"};
+      endCursor = oldest;
     }
-    return {records:out, truncated:true, reason:"reached the API's max offset (5,000) — narrow the time range to see older records"};
   }
 
   // ---------- on-chain USDC deposits/withdrawals (Blockscout) ----------
@@ -565,7 +590,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     "0x4d97dcd97ec945f40cf65f87097ace5ea0476045"  // Conditional Tokens
   ]);
   const INFRA_NAME_RE = /exchange|conditional ?tokens|negrisk|adapter|fee ?module|uma/i;
-  const DW_MAX_PAGES_PER_TOKEN = 3; // 50 transfers per page
+  const DW_MAX_PAGES_PER_TOKEN = 20; // 50 transfers per page (1,000 per token); the loop stops early once past the time window
 
   async function fetchTransfers(addr, startTs){
     const a = addr.toLowerCase();
