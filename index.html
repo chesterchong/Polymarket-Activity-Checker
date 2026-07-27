@@ -302,6 +302,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
       <div class="stat"><div class="label">Deposits</div><div class="value" id="stDeposits">–</div></div>
       <div class="stat"><div class="label">Withdrawals</div><div class="value" id="stWithdrawals">–</div></div>
+      <div class="stat" title="Current value of open positions (from Polymarket's value API) — unaffected by the filters below"><div class="label">Portfolio value</div><div class="value" id="stPortfolio">–</div></div>
       <div class="stat" title="Estimated taker fees on the trades in view (makers pay none)"><div class="label">Fees (est.)</div><div class="value" id="stFees">–</div></div>
       <div class="stat" title="Sum of TAKER_REBATE records in view"><div class="label">Taker rebates</div><div class="value" id="stTakerRebates">–</div></div>
       <div class="stat" title="Profit and loss over the selected time range (from Polymarket's PnL API) — unaffected by the client-side filters below"><div class="label">PnL <span id="pnlWindow"></span></div><div class="value" id="stPnl">–</div></div>
@@ -351,6 +352,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
           <option value="200">200 rows</option>
         </select>
         <button type="button" class="chip" id="dwChip" title="Show only deposits and withdrawals">D/W</button>
+        <button type="button" class="chip" id="openChip" title="Show only trades on markets this wallet has not redeemed yet">Not redeemed</button>
         <span id="chips" class="chips"></span>
         <button class="btn" id="resetBtn" title="Reset all filters">Reset filters</button>
       </div>
@@ -419,6 +421,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
   let marketFilter = null; // {conditionId, eventSlug, slug, title} set by clicking a row's type badge
   let comboMode = "";     // "" | "single" | "combo"
   let dwOnly = false;     // D/W chip: show only deposits/withdrawals
+  let openOnly = false;   // Not-redeemed chip: trades on markets the wallet hasn't redeemed
   // hybrid deep-fetch: when the unfiltered feed hits the API's offset cap it only
   // covers the most recent slice, so filtering client-side to a sparse type would
   // silently miss older records — a targeted type= query reaches much further back
@@ -762,7 +765,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     const curSet = new Set(currentWallets.map(a => a.toLowerCase()));
     const hist = [...addrHistory].reverse()
       .filter(e => !curSet.has(e.a.toLowerCase()))
-      .slice(0, 12)
+      .slice(0, 4) // keep the row on one line — more chips would force a scrollbar
       .map(e => {
         const label = e.label || walletMeta.get(e.a.toLowerCase());
         return '<button type="button" class="wallet-tag hist" data-addr="' + esc(e.a)
@@ -772,7 +775,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     box.innerHTML = cur.join("") + (cur.length && hist.length ? '<span class="sep">·</span>' : "") + hist.join("");
     box.classList.toggle("active", cur.length + hist.length > 0);
     // resolve missing contract-type labels for visible history chips, then persist
-    for(const e of [...addrHistory].reverse().slice(0, 12)){
+    for(const e of [...addrHistory].reverse().slice(0, 4)){
       if(e.label) continue;
       fetchWalletMeta(e.a).then(label => {
         if(e.label === label) return;
@@ -870,6 +873,13 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       Promise.all(valid.map(a => fetchPnl(a, win)))
         .then(parts => renderPnl(parts.reduce((s,v)=>s+v, 0)))
         .catch(() => renderPnl(null));
+      $("stPortfolio").textContent = "…";
+      Promise.all(valid.map(a =>
+        fetchWithRetry("https://data-api.polymarket.com/value?user=" + a, 3, 15000)
+          .then(res => res.json())
+          .then(j => Number((Array.isArray(j) && j[0] && j[0].value) || 0))))
+        .then(parts => { $("stPortfolio").textContent = "$" + fmtUsd(parts.reduce((s,v)=>s+v, 0)); })
+        .catch(() => { $("stPortfolio").textContent = "–"; });
       allRecords.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       if(notes.length) errBox.textContent = notes.join(" · ");
       renderAll();
@@ -939,7 +949,18 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     const q = $("searchBox").value.trim().toLowerCase();
     const from = dateBound("dateFrom", false), to = dateBound("dateTo", true);
     const tSel = $("typeSel").value, sSel = $("sideSel").value;
+    // markets this wallet has already redeemed, keyed per wallet
+    let redeemed = null;
+    if(openOnly){
+      redeemed = new Set(allRecords
+        .filter(r => r.type === "REDEEM" && r.conditionId)
+        .map(r => (r.proxyWallet||"").toLowerCase() + "|" + r.conditionId.toLowerCase()));
+    }
     filteredRecords = allRecords.filter(r => {
+      if(openOnly){
+        if(r.type !== "TRADE" || !r.conditionId) return false;
+        if(redeemed.has((r.proxyWallet||"").toLowerCase() + "|" + r.conditionId.toLowerCase())) return false;
+      }
       if(dwOnly && r.type !== "DEPOSIT" && r.type !== "WITHDRAWAL") return false;
       if(comboMode === "combo" && r.isCombo !== true) return false;
       if(comboMode === "single" && r.isCombo === true) return false;
@@ -1350,6 +1371,13 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     refreshResults();
   });
 
+  // Not-redeemed chip: trades on markets with no matching REDEEM for that wallet
+  $("openChip").addEventListener("click", ()=>{
+    openOnly = !openOnly;
+    $("openChip").classList.toggle("on", openOnly);
+    refreshResults();
+  });
+
   // column show/hide menu
   const COLS = ["Time","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"];
   let hiddenCols = new Set();
@@ -1510,6 +1538,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     $("rowsSel").value = "100"; pageSize = 100;
     marketFilter = null; renderChips();
     dwOnly = false; $("dwChip").classList.remove("on");
+    openOnly = false; $("openChip").classList.remove("on");
     comboMode = "";
     document.querySelectorAll("#comboSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === ""));
     refreshResults();
