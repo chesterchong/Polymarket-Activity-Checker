@@ -118,6 +118,29 @@ input[type="search"]{
 }
 
 /* table */
+/* results area: table/json on the left, collapsible filter sidebar on the right.
+   The area only shows while one of its views is active. */
+.table-area{display:none; align-items:stretch; gap:8px;}
+.table-area:has(.table-wrap.active), .table-area:has(.json-wrap.active){display:flex;}
+.table-area .table-main{flex:1 1 auto; min-width:0;}
+.side-bar{display:flex; align-items:stretch; flex:0 0 auto;}
+.side-panel{width:0; overflow:hidden; border:1px solid var(--border); border-right:none; background:var(--card); transition:width .15s ease;}
+.side-bar.open .side-panel{width:220px;}
+.sp-inner{position:sticky; top:8px; width:220px; box-sizing:border-box; padding:14px; display:flex; flex-direction:column; gap:8px;}
+.sp-title{font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted-foreground);}
+.side-tabs{border:1px solid var(--border); background:var(--card); flex:0 0 auto;}
+.side-tab{
+  position:sticky; top:8px; writing-mode:vertical-rl;
+  display:flex; align-items:center; gap:7px;
+  border:none; background:transparent; color:var(--muted-foreground);
+  font-family:inherit; font-size:12px; letter-spacing:.04em;
+  padding:14px 7px; cursor:pointer;
+}
+.side-tab:hover{color:var(--foreground);}
+.side-bar.open .side-tab{color:var(--primary); box-shadow:inset -2px 0 0 var(--primary);}
+.side-tab .dot{display:none; width:6px; height:6px; border-radius:50%; background:var(--primary);}
+.side-tab.has-hidden .dot{display:block;}
+
 .table-wrap{display:none; border:1px solid var(--border); overflow-x:auto;}
 .table-wrap.active{display:block;}
 .table-wrap.grabbable{cursor:grab;} /* interactive cells (headers, badges, links) override with their own cursor */
@@ -227,8 +250,8 @@ footer a{color:inherit;}
 .ghost .gh-sug{color:var(--muted-foreground); opacity:.75;}
 #addrInput{word-break:break-all;}
 
-/* segmented control */
-.seg{display:inline-flex; border:1px solid var(--border); background:var(--card);}
+/* segmented control — pill-shaped */
+.seg{display:inline-flex; border:1px solid var(--border); background:var(--card); border-radius:999px; overflow:hidden;}
 .seg-btn{height:30px; padding:0 12px; font-size:13px; font-family:inherit; border:none; background:transparent; color:var(--muted-foreground); cursor:pointer;}
 .seg-btn + .seg-btn{border-left:1px solid var(--border);}
 .seg-btn.on{background:var(--primary); color:var(--primary-foreground);}
@@ -239,7 +262,7 @@ footer a{color:inherit;}
 .rb-left{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
 input[type="date"]{height:30px; border:1px solid var(--border); background:var(--card); color:var(--foreground); font-family:inherit; font-size:12px; padding:0 8px; color-scheme:light dark;}
 .chips{display:inline-flex; gap:6px;}
-.chip{height:30px; border:1px dashed var(--primary); color:var(--primary); background:transparent; font-size:12px; padding:0 10px; cursor:pointer; font-family:inherit;}
+.chip{height:30px; border:1px dashed var(--primary); color:var(--primary); background:transparent; font-size:12px; padding:0 12px; cursor:pointer; font-family:inherit; border-radius:999px;}
 .chip:hover{background:rgba(22,93,252,.08);}
 
 /* sortable + resizable columns */
@@ -267,15 +290,9 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
 /* active D/W chip */
 .chip.on{background:var(--primary); color:var(--primary-foreground); border-style:solid; border-color:var(--primary);}
 
-/* columns show/hide menu */
-.cols-wrap{position:relative;}
-.cols-menu{
-  display:none; position:absolute; right:0; top:34px; z-index:20; min-width:160px;
-  border:1px solid var(--border); background:var(--card); box-shadow:0 8px 24px rgba(0,0,0,.18);
-  padding:6px 0;
-}
-.cols-menu.open{display:block;}
-.cols-item{display:flex; align-items:center; gap:8px; padding:5px 12px; font-size:13px; cursor:pointer; white-space:nowrap;}
+/* columns show/hide list (in the right-side panel) */
+.cols-list{display:flex; flex-direction:column;}
+.cols-item{display:flex; align-items:center; gap:8px; padding:6px 4px; font-size:13px; cursor:pointer; white-space:nowrap;}
 .cols-item:hover{background:var(--muted);}
 .cols-item input{accent-color:var(--primary);}
 
@@ -396,14 +413,12 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       </div>
       <div class="results-actions">
         <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
-        <div class="cols-wrap">
-          <button class="btn" id="colsBtn">Columns ▾</button>
-          <div class="cols-menu" id="colsMenu"></div>
-        </div>
         <button class="btn" id="dlBtn">Download CSV</button>
       </div>
     </div>
 
+    <div class="table-area" id="tableArea">
+    <div class="table-main">
     <div class="table-wrap" id="tableWrap">
       <div class="drag-hint" id="dragHint" aria-hidden="true">
         <div class="ghost">
@@ -434,6 +449,20 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       <div class="json-note" id="jsonNote"></div>
       <pre id="jsonPre"></pre>
     </div>
+    </div><!-- /.table-main -->
+
+    <div class="side-bar" id="sideBar">
+      <div class="side-panel">
+        <div class="sp-inner">
+          <div class="sp-title">Columns</div>
+          <div id="colsList" class="cols-list"></div>
+        </div>
+      </div>
+      <div class="side-tabs">
+        <button type="button" class="side-tab" id="sideTab" aria-expanded="false" title="Show or hide the column picker">Columns<span class="dot"></span></button>
+      </div>
+    </div>
+    </div><!-- /.table-area -->
 
     <div class="empty" id="emptyBox">No activity found for the selected filters.</div>
 
@@ -1254,6 +1283,16 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     if(learned){ try{ localStorage.setItem(DRAG_HINT_KEY, "1"); }catch(e){} }
   }
   window.addEventListener("resize", ()=>{ if($("tableWrap").classList.contains("active")) updateGrabAffordance(); });
+
+  // ---------- collapsible columns sidebar ----------
+  const SIDEBAR_KEY = "pmac_cols_open";
+  function setSidebar(open){
+    $("sideBar").classList.toggle("open", open);
+    $("sideTab").setAttribute("aria-expanded", String(open));
+    try{ localStorage.setItem(SIDEBAR_KEY, open ? "1" : ""); }catch(e){}
+  }
+  $("sideTab").addEventListener("click", ()=>setSidebar(!$("sideBar").classList.contains("open")));
+  try{ if(localStorage.getItem(SIDEBAR_KEY) === "1") setSidebar(true); }catch(e){}
   // scrolling any other way (scrollbar, shift+wheel, trackpad) hides the pill for
   // now but lets it reappear on a later search, since they may not have seen it
   $("tableWrap").addEventListener("scroll", ()=>dismissDragHint(false), {passive:true});
@@ -1540,7 +1579,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     refreshResults();
   });
 
-  // column show/hide menu
+  // column show/hide — checkbox list in the right-side Columns panel
   const COLS = ["Time","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"];
   let hiddenCols = new Set();
   try{ hiddenCols = new Set((JSON.parse(localStorage.getItem("pmac_hidden_cols"))||[]).filter(i => i>=0 && i<COLS.length)); }catch(e){}
@@ -1551,24 +1590,17 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       .map(i => ".table-wrap th:nth-child("+(i+1)+"),.table-wrap td:nth-child("+(i+1)+"){display:none;}")
       .join("");
     try{ localStorage.setItem("pmac_hidden_cols", JSON.stringify([...hiddenCols])); }catch(e){}
+    // dot on the collapsed tab when the view is missing columns
+    $("sideTab").classList.toggle("has-hidden", hiddenCols.size > 0);
   }
-  function buildColsMenu(){
-    $("colsMenu").innerHTML = COLS.map((c,i) =>
-      '<label class="cols-item"><input type="checkbox" data-col="'+i+'"'+(hiddenCols.has(i) ? "" : " checked")+'> '+esc(c)+'</label>'
-    ).join("");
-  }
-  $("colsBtn").addEventListener("click", e => {
-    e.stopPropagation();
-    if(!$("colsMenu").classList.contains("open")) buildColsMenu();
-    $("colsMenu").classList.toggle("open");
-  });
-  $("colsMenu").addEventListener("click", e => e.stopPropagation());
-  $("colsMenu").addEventListener("change", e => {
+  $("colsList").innerHTML = COLS.map((c,i) =>
+    '<label class="cols-item"><input type="checkbox" data-col="'+i+'"'+(hiddenCols.has(i) ? "" : " checked")+'> '+esc(c)+'</label>'
+  ).join("");
+  $("colsList").addEventListener("change", e => {
     const i = Number(e.target.dataset.col);
     if(e.target.checked) hiddenCols.delete(i); else hiddenCols.add(i);
     applyHiddenCols();
   });
-  document.addEventListener("click", ()=> $("colsMenu").classList.remove("open"));
   applyHiddenCols();
 
   // active-filter chip for badge-click market filters
