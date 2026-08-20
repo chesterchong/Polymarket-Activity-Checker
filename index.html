@@ -120,6 +120,8 @@ input[type="search"]{
 /* table */
 .table-wrap{display:none; border:1px solid var(--border); overflow-x:auto;}
 .table-wrap.active{display:block;}
+.table-wrap.grab-panning{cursor:grabbing; user-select:none;}
+.table-wrap.grab-panning *{cursor:grabbing !important;}
 table{width:100%; border-collapse:collapse; font-size:13px;}
 th{
   text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:500;
@@ -1537,6 +1539,54 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       document.body.style.cursor = "col-resize";
     });
   });
+  // ---------- drag anywhere in the table to scroll it sideways ----------
+  // A press only becomes a pan after a small movement threshold, so plain
+  // clicks (sort headers, type-badge market filter, links) still work; after
+  // a real drag the trailing click is swallowed so it can't trigger them.
+  // Touch devices pan the overflow natively, so this is mouse-only.
+  (function(){
+    const wrap = $("tableWrap");
+    const THRESHOLD = 6; // px of movement before a press becomes a pan
+    let downX = 0, startL = 0, panning = false, pid = null;
+    function move(e){
+      if(e.pointerId !== pid) return;
+      const dx = e.clientX - downX;
+      if(!panning){
+        if(Math.abs(dx) < THRESHOLD) return;
+        panning = true;
+        wrap.classList.add("grab-panning");
+        try{ wrap.setPointerCapture(pid); }catch(_){}
+        const sel = window.getSelection && window.getSelection();
+        if(sel) sel.removeAllRanges(); // drop the few px of text selected before the threshold
+      }
+      wrap.scrollLeft = startL - dx;
+    }
+    function swallowClick(e){ e.stopPropagation(); e.preventDefault(); }
+    function up(e){
+      wrap.removeEventListener("pointermove", move);
+      wrap.removeEventListener("pointerup", up);
+      wrap.removeEventListener("pointercancel", up);
+      try{ wrap.releasePointerCapture(pid); }catch(_){}
+      pid = null;
+      if(panning){
+        panning = false;
+        wrap.classList.remove("grab-panning");
+        wrap.addEventListener("click", swallowClick, true);
+        setTimeout(()=>wrap.removeEventListener("click", swallowClick, true), 0);
+      }
+    }
+    wrap.addEventListener("pointerdown", e => {
+      if(e.button !== 0 || e.pointerType !== "mouse") return;
+      if(e.target.closest("a, .col-resizer")) return;
+      if(wrap.scrollWidth <= wrap.clientWidth) return; // nothing to pan
+      downX = e.clientX; startL = wrap.scrollLeft;
+      pid = e.pointerId; panning = false;
+      wrap.addEventListener("pointermove", move);
+      wrap.addEventListener("pointerup", up);
+      wrap.addEventListener("pointercancel", up);
+    });
+  })();
+
   // one download button whose format follows the active tab
   window.__pmacDebug = {fetchTransfersViaLogs}; // console access for diagnostics
 
