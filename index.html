@@ -312,13 +312,16 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       </div>
       <div class="toolbar">
         <div class="toolbar-left">
-          <select id="timeSel" aria-label="Time range">
-            <option value="">All time</option>
-            <option value="86400">Last 24 hours</option>
-            <option value="604800">Last 7 days</option>
-            <option value="2592000">Last 30 days</option>
-            <option value="7776000">Last 90 days</option>
-          </select>
+          <div class="seg" id="timeSeg" role="group" aria-label="Time range">
+            <button type="button" class="seg-btn" data-v="86400" title="Last 24 hours">1d</button>
+            <button type="button" class="seg-btn" data-v="259200" title="Last 3 days">3d</button>
+            <button type="button" class="seg-btn" data-v="604800" title="Last 7 days">1w</button>
+            <button type="button" class="seg-btn" data-v="1209600" title="Last 14 days">2w</button>
+            <button type="button" class="seg-btn" data-v="2592000" title="Last 30 days">1m</button>
+            <button type="button" class="seg-btn" data-v="7776000" title="Last 90 days">3m</button>
+            <button type="button" class="seg-btn" data-v="31536000" title="Last 365 days">1y</button>
+            <button type="button" class="seg-btn" data-v="" title="Complete history">All</button>
+          </div>
           <span class="hint">Filters appear below the statistics after checking.</span>
         </div>
         <button class="btn btn-primary" id="submitBtn">Check activity</button>
@@ -471,6 +474,23 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
   let comboMode = "";     // "" | "single" | "combo"
   let dwOnly = false;     // D/W chip: show only deposits/withdrawals
   let openOnly = false;   // Not-redeemed chip: trades on markets the wallet hasn't redeemed
+  // time-range pills: seconds back from now, "" = all time. Defaults to 30d —
+  // covers the typical "recent activity" check and keeps the on-chain scan quick;
+  // the last choice is remembered per browser.
+  const TIME_WIN_KEY = "pmac_time_win", TIME_WIN_DEFAULT = "2592000";
+  let timeWin = TIME_WIN_DEFAULT;
+  try{
+    const saved = localStorage.getItem(TIME_WIN_KEY);
+    if(saved !== null && document.querySelector('#timeSeg .seg-btn[data-v="' + saved + '"]')) timeWin = saved;
+  }catch(e){}
+  function setTimeWin(v){
+    timeWin = v;
+    try{ localStorage.setItem(TIME_WIN_KEY, v); }catch(e){}
+    document.querySelectorAll("#timeSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  }
+  setTimeWin(timeWin);
+  document.querySelectorAll("#timeSeg .seg-btn").forEach(b =>
+    b.addEventListener("click", () => setTimeWin(b.dataset.v)));
   // hybrid deep-fetch: when the unfiltered feed hits the API's offset cap it only
   // covers the most recent slice, so filtering client-side to a sparse type would
   // silently miss older records — a targeted type= query reaches much further back
@@ -814,11 +834,14 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
   // ---------- PnL over the selected time frame (Polymarket user-pnl API) ----------
   // The API returns a cumulative PnL series; the window's PnL is last − first.
   // For windows without a native interval (90d), we slice the "max" series.
-  function pnlPlan(win){ // timeSel value -> {interval, fidelity, sliceStart, label}
-    if(win === "86400")   return {interval:"1d",  fidelity:"1h", label:"24h"};
-    if(win === "604800")  return {interval:"1w",  fidelity:"1h", label:"7d"};
-    if(win === "2592000") return {interval:"1m",  fidelity:"1d", label:"30d"};
-    if(win === "7776000") return {interval:"max", fidelity:"1d", sliceStart:true, label:"90d"};
+  function pnlPlan(win){ // time-range value -> {interval, fidelity, sliceStart, label}
+    if(win === "86400")    return {interval:"1d",  fidelity:"1h", label:"24h"};
+    if(win === "259200")   return {interval:"1w",  fidelity:"1h", sliceStart:true, label:"3d"};
+    if(win === "604800")   return {interval:"1w",  fidelity:"1h", label:"7d"};
+    if(win === "1209600")  return {interval:"1m",  fidelity:"1d", sliceStart:true, label:"14d"};
+    if(win === "2592000")  return {interval:"1m",  fidelity:"1d", label:"30d"};
+    if(win === "7776000")  return {interval:"max", fidelity:"1d", sliceStart:true, label:"90d"};
+    if(win === "31536000") return {interval:"max", fidelity:"1d", sliceStart:true, label:"1y"};
     return {interval:"max", fidelity:"1d", label:"all time"};
   }
   async function fetchPnl(addr, win){
@@ -892,7 +915,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     // build shared params — only the time range is applied at fetch time;
     // everything else filters client-side after the data is in
     const params = {};
-    const win = $("timeSel").value;
+    const win = timeWin;
     if(win) params.start = String(Math.floor(Date.now()/1000) - Number(win));
     lastParams = params;
     feedTruncated = false;
