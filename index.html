@@ -91,13 +91,21 @@ select:focus-visible,.btn:focus-visible,textarea:focus-visible,.tab:focus-visibl
 @keyframes spin{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion:reduce){.spinner{animation:none;}}
 
-/* summary */
-.summary{display:none; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); border:1px solid var(--border);}
-.summary.active{display:grid;}
-.stat{padding:12px 14px; border-right:1px solid var(--border);}
-.stat:last-child{border-right:none;}
-.stat .label{font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted-foreground);}
-.stat .value{font-size:18px; font-weight:600; margin-top:2px; font-variant-numeric:tabular-nums;}
+/* summary: hero row for the headline numbers, compact grid for the rest */
+.summary{display:none; border:1px solid var(--border); background:var(--card); overflow:hidden;}
+.summary.active{display:block;}
+.sum-hero{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); border-bottom:1px solid var(--border);}
+.sum-hero .stat{padding:18px 20px 16px; min-width:0;}
+.sum-hero .value{font-size:clamp(18px, 2.4vw, 26px); font-weight:650; letter-spacing:-.02em; margin-top:4px; overflow:hidden; text-overflow:ellipsis;}
+.sum-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr));}
+.sum-grid .stat{padding:12px 20px 14px;}
+.sum-grid .value{font-size:15px; font-weight:600; margin-top:3px;}
+.stat{position:relative;}
+/* hairline separators that work across wrapped grid rows */
+.stat::before{content:""; position:absolute; left:0; top:14%; height:72%; width:1px; background:var(--border);}
+.sum-hero .stat:first-child::before, .sum-grid .stat:first-child::before{display:none;}
+.stat .label{font-size:10px; font-weight:500; text-transform:uppercase; letter-spacing:.09em; color:var(--muted-foreground); white-space:nowrap;}
+.stat .value{font-variant-numeric:tabular-nums;}
 .stat .value.pos{color:var(--success);}
 .stat .value.neg{color:var(--destructive);}
 .stat .label span{text-transform:none; letter-spacing:0;}
@@ -239,15 +247,7 @@ th.num{text-align:right;}
 footer{margin-top:8px; font-size:12px; color:var(--muted-foreground);}
 footer a{color:inherit;}
 
-/* address autocomplete ghost */
 .ta-wrap{position:relative;}
-.ghost{
-  position:absolute; inset:0; padding:12px; overflow:hidden; pointer-events:none;
-  font-family:'Geist Mono',ui-monospace,monospace; font-size:13px; line-height:1.6;
-  white-space:pre-wrap; word-break:break-all;
-}
-.ghost .gh-hide{color:transparent;}
-.ghost .gh-sug{color:var(--muted-foreground); opacity:.75;}
 #addrInput{word-break:break-all;}
 
 /* segmented control — pill-shaped */
@@ -282,19 +282,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 .wallet-tag{border:1px solid var(--border); background:var(--card); padding:4px 10px; font-size:12px; color:var(--muted-foreground); flex-shrink:0; font-family:'Geist Mono',ui-monospace,monospace;}
 .wallet-tag .wtype{color:var(--primary); font-weight:500; margin-left:6px;}
 .wallet-tag.cur{border-color:var(--primary);}
-button.wallet-tag.hist{cursor:pointer;}
-button.wallet-tag.hist:hover{border-color:var(--primary); color:var(--foreground);}
-button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
 .wallets .sep{color:var(--muted-foreground); font-size:12px; align-self:center; flex-shrink:0;}
 
 /* active D/W chip */
 .chip.on{background:var(--primary); color:var(--primary-foreground); border-style:solid; border-color:var(--primary);}
 
-/* columns show/hide list (in the right-side panel) */
+/* columns show/hide + reorder list (in the right-side panel) */
 .cols-list{display:flex; flex-direction:column;}
 .cols-item{display:flex; align-items:center; gap:8px; padding:6px 4px; font-size:13px; cursor:pointer; white-space:nowrap;}
 .cols-item:hover{background:var(--muted);}
 .cols-item input{accent-color:var(--primary);}
+.cols-item .drag-dots{color:var(--muted-foreground); cursor:grab; font-size:13px; user-select:none;}
+.cols-item.dragging{opacity:.35;}
+.cols-item.drop-above{box-shadow:inset 0 2px 0 var(--primary);}
+.cols-item.drop-below{box-shadow:inset 0 -2px 0 var(--primary);}
 
 /* tx copy button */
 .copy-btn{margin-left:6px; border:1px solid var(--border); background:transparent; color:var(--muted-foreground); cursor:pointer; font-size:11px; padding:1px 6px; font-family:inherit;}
@@ -314,7 +315,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     <div class="header">
       <div>
         <h1>Polymarket Activity Checker</h1>
-        <p class="sub">Paste one or more addresses, separated by commas or new lines. Previously used addresses autocomplete — press Tab to accept.</p>
+        <p class="sub">Paste one or more addresses, separated by commas or new lines.</p>
       </div>
       <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
         <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -324,7 +325,6 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
 
     <div class="card">
       <div class="ta-wrap">
-        <div class="ghost" id="ghost" aria-hidden="true"></div>
         <textarea id="addrInput" placeholder="0x..." spellcheck="false"></textarea>
       </div>
       <div class="toolbar">
@@ -349,19 +349,20 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     <div class="progress" id="progressBox"><span class="spinner"></span><span id="progressText">Fetching…</span></div>
 
     <div class="summary" id="summaryBox">
-      <div class="stat"><div class="label">Records</div><div class="value" id="stRecords">–</div></div>
-      <div class="stat" title="Sum of trade sizes in view (Polymarket trading volume — excludes deposits, withdrawals, rewards, redemptions, and rebates)"><div class="label">Volume (USDC)</div><div class="value" id="stVolume">–</div></div>
-      <div class="stat"><div class="label">Buys</div><div class="value" id="stBuys">–</div></div>
-      <div class="stat"><div class="label">Sells</div><div class="value" id="stSells">–</div></div>
-      <div class="stat"><div class="label">Markets</div><div class="value" id="stMarkets">–</div></div>
-      <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
-      <div class="stat"><div class="label">Deposits</div><div class="value" id="stDeposits">–</div></div>
-      <div class="stat"><div class="label">Withdrawals</div><div class="value" id="stWithdrawals">–</div></div>
-      <div class="stat" title="Current value of open positions (from Polymarket's value API) — unaffected by the filters below"><div class="label">Portfolio value</div><div class="value" id="stPortfolio">–</div></div>
-      <div class="stat" title="Estimated taker fees on the trades in view (makers pay none)"><div class="label">Fees (est.)</div><div class="value" id="stFees">–</div></div>
-      <div class="stat" title="Sum of TAKER_REBATE records in view"><div class="label">Taker rebates</div><div class="value" id="stTakerRebates">–</div></div>
-      <div class="stat" title="Profit and loss over the selected time range (from Polymarket's PnL API) — unaffected by the client-side filters below"><div class="label">PnL <span id="pnlWindow"></span></div><div class="value" id="stPnl">–</div></div>
-      <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
+      <div class="sum-hero">
+        <div class="stat" title="Sum of trade sizes in view (Polymarket trading volume — excludes deposits, withdrawals, rewards, redemptions, and rebates)"><div class="label">Volume (USDC)</div><div class="value" id="stVolume">–</div></div>
+        <div class="stat" title="Profit and loss over the selected time range (from Polymarket's PnL API) — unaffected by the client-side filters below"><div class="label">PnL <span id="pnlWindow"></span></div><div class="value" id="stPnl">–</div></div>
+        <div class="stat" title="Current value of open positions (from Polymarket's value API) — unaffected by the filters below"><div class="label">Portfolio value</div><div class="value" id="stPortfolio">–</div></div>
+      </div>
+      <div class="sum-grid">
+        <div class="stat"><div class="label">Records</div><div class="value" id="stRecords">–</div></div>
+        <div class="stat"><div class="label">Deposits</div><div class="value pos" id="stDeposits">–</div></div>
+        <div class="stat"><div class="label">Withdrawals</div><div class="value neg" id="stWithdrawals">–</div></div>
+        <div class="stat" title="Estimated taker fees on the trades in view (makers pay none)"><div class="label">Fees (est.)</div><div class="value" id="stFees">–</div></div>
+        <div class="stat" title="Sum of TAKER_REBATE records in view"><div class="label">Taker rebates</div><div class="value" id="stTakerRebates">–</div></div>
+        <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
+        <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
+      </div>
     </div>
 
     <div class="wallets" id="walletsBox"></div>
@@ -548,64 +549,8 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     return {valid, invalid};
   }
 
-  // ---------- address history + inline autocomplete (Tab to accept) ----------
-  // Entries carry a last-used timestamp; every page load prunes entries unused
-  // for HIST_MAX_AGE and caps the list at HIST_MAX, so storage never grows unbounded.
-  const HIST_KEY = "pmac_addr_history", HIST_MAX = 50, HIST_MAX_AGE = 180*86400; // 180 days
-  let addrHistory = [];
-  try{
-    const nowS = Math.floor(Date.now()/1000);
-    const raw = JSON.parse(localStorage.getItem(HIST_KEY)) || [];
-    addrHistory = raw
-      .map(e => typeof e === "string" ? {a:e, t:nowS} : e) // migrate old plain-string format
-      .filter(e => e && typeof e.a === "string" && (nowS - (e.t||0)) < HIST_MAX_AGE)
-      .slice(-HIST_MAX);
-    localStorage.setItem(HIST_KEY, JSON.stringify(addrHistory));
-  }catch(e){}
-  function persistHistory(){
-    try{ localStorage.setItem(HIST_KEY, JSON.stringify(addrHistory)); }catch(e){}
-  }
-  function saveAddrHistory(valid){
-    const nowS = Math.floor(Date.now()/1000);
-    for(const a of valid){
-      const i = addrHistory.findIndex(e => e.a.toLowerCase() === a.toLowerCase());
-      const label = i >= 0 ? addrHistory[i].label : undefined;
-      if(i >= 0) addrHistory.splice(i, 1); // re-using an address refreshes its timestamp
-      addrHistory.push({a, t:nowS, label});
-    }
-    addrHistory = addrHistory.slice(-HIST_MAX);
-    persistHistory();
-  }
-  const ta = $("addrInput"), ghost = $("ghost");
-  let ghostRemainder = "";
-  function updateGhost(){
-    const v = ta.value;
-    ghostRemainder = "";
-    // only suggest while the caret sits at the very end of the input
-    if(ta.selectionStart === v.length && ta.selectionEnd === v.length){
-      const tok = (/[^,\s;]*$/.exec(v) || [""])[0];
-      if(tok.length >= 2){
-        const t = tok.toLowerCase();
-        // most recently used first
-        const hit = [...addrHistory].reverse().find(e => e.a.toLowerCase().startsWith(t) && e.a.length > tok.length);
-        if(hit) ghostRemainder = hit.a.slice(tok.length);
-      }
-    }
-    ghost.innerHTML = '<span class="gh-hide">'+esc(v)+'</span><span class="gh-sug">'+esc(ghostRemainder)+'</span>';
-    ghost.scrollTop = ta.scrollTop;
-  }
-  ta.addEventListener("input", updateGhost);
-  ta.addEventListener("keyup", updateGhost);
-  ta.addEventListener("click", updateGhost);
-  ta.addEventListener("blur", ()=>{ ghostRemainder=""; ghost.innerHTML=""; });
-  ta.addEventListener("scroll", ()=>{ ghost.scrollTop = ta.scrollTop; });
-  ta.addEventListener("keydown", e => {
-    if(e.key === "Tab" && ghostRemainder){
-      e.preventDefault();
-      ta.value += ghostRemainder;
-      updateGhost();
-    }
-  });
+  // address history was removed — drop any previously stored addresses
+  try{ localStorage.removeItem("pmac_addr_history"); }catch(e){}
 
   // ---------- fetching with limit=500 & offset pagination ----------
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
@@ -898,38 +843,13 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
 
   function renderWalletTags(){
     const box = $("walletsBox");
-    // current search first (left), then older searches, most recent first
     const cur = currentWallets.map(a => {
       const label = walletMeta.get(a.toLowerCase());
       return '<span class="wallet-tag cur">' + esc(short(a))
         + '<span class="wtype">' + esc(label || "…") + '</span></span>';
     });
-    const curSet = new Set(currentWallets.map(a => a.toLowerCase()));
-    // at most 4 chips on the row in total (current search included): a new search
-    // enters on the left and the oldest visible chip drops off. Older addresses
-    // stay in storage for Tab-autocomplete.
-    const MAX_CHIPS = 4;
-    const hist = [...addrHistory].reverse()
-      .filter(e => !curSet.has(e.a.toLowerCase()))
-      .slice(0, Math.max(0, MAX_CHIPS - cur.length))
-      .map(e => {
-        const label = e.label || walletMeta.get(e.a.toLowerCase());
-        return '<button type="button" class="wallet-tag hist" data-addr="' + esc(e.a)
-          + '" title="Search this address again">' + esc(short(e.a))
-          + (label ? '<span class="wtype">' + esc(label) + '</span>' : '') + '</button>';
-      });
-    box.innerHTML = cur.join("") + (cur.length && hist.length ? '<span class="sep">·</span>' : "") + hist.join("");
-    box.classList.toggle("active", cur.length + hist.length > 0);
-    // resolve missing contract-type labels for visible history chips, then persist
-    for(const e of [...addrHistory].reverse().slice(0, 4)){
-      if(e.label) continue;
-      fetchWalletMeta(e.a).then(label => {
-        if(e.label === label) return;
-        e.label = label;
-        persistHistory();
-        renderWalletTags();
-      });
-    }
+    box.innerHTML = cur.join("");
+    box.classList.toggle("active", cur.length > 0);
   }
 
   async function run(){
@@ -939,7 +859,6 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     errBox.textContent = "";
     if(invalid.length) errBox.textContent = "Skipping invalid address" + (invalid.length>1?"es":"") + ": " + invalid.slice(0,3).join(", ") + (invalid.length>3?" …":"");
     if(!valid.length){ errBox.textContent = "Enter at least one valid 0x address (40 hex characters)."; return; }
-    saveAddrHistory(valid);
 
     // build shared params — only the time range is applied at fetch time;
     // everything else filters client-side after the data is in
@@ -1057,9 +976,6 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     // Polymarket trading volume = sum of TRADE sizes (matches leaderboard vol),
     // not usdcSize across all activity types (deposits/rewards/redeems/etc.)
     const vol = rows.reduce((s,r)=>s+(r.type==="TRADE" ? Number(r.size)||0 : 0),0);
-    const buys = rows.filter(r=>r.side==="BUY").length;
-    const sells = rows.filter(r=>r.side==="SELL").length;
-    const mkts = new Set(rows.map(r=>r.conditionId).filter(Boolean)).size;
     const combos = rows.filter(r=>r.isCombo === true).length;
     const dep = rows.reduce((s,r)=>s+(r.type==="DEPOSIT" ? Number(r.usdcSize)||0 : 0),0);
     const wd  = rows.reduce((s,r)=>s+(r.type==="WITHDRAWAL" ? Number(r.usdcSize)||0 : 0),0);
@@ -1078,9 +994,6 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     $("stRecords").textContent = rows.length.toLocaleString()
       + (rows.length !== allRecords.length ? " / " + allRecords.length.toLocaleString() : "");
     $("stVolume").textContent = "$" + fmtUsd(vol);
-    $("stBuys").textContent = buys.toLocaleString();
-    $("stSells").textContent = sells.toLocaleString();
-    $("stMarkets").textContent = mkts.toLocaleString();
     $("stPages").textContent = pagesFetched.toLocaleString();
   }
 
@@ -1222,19 +1135,21 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       ? '<a class="tx-link mono" href="https://polygonscan.com/tx/'+esc(r.transactionHash)+'" target="_blank" rel="noopener">'+esc(r.transactionHash.slice(0,10))+'…</a>'
         + '<button type="button" class="copy-btn" data-tx="'+esc(r.transactionHash)+'" title="Copy full transaction hash" aria-label="Copy full transaction hash">⧉</button>'
       : "";
-    return "<tr>"
-      + '<td class="time-cell mono">'+fmtTime(r.timestamp||0)+"</td>"
-      + '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(r.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(r.proxyWallet))+"</a></td>"
-      + "<td>"+typeBadge+"</td>"
-      + "<td>"+mkt+"</td>"
-      + '<td class="outcome">'+esc(r.outcome||"")+"</td>"
-      + "<td>"+sideBadge+"</td>"
-      + '<td class="num mono">'+fmtNum(r.size)+"</td>"
-      + '<td class="num mono">'+(r.price!=null?Number(r.price).toFixed(3):"")+"</td>"
-      + '<td class="num mono">'+fmtUsd(r.usdcSize)+"</td>"
-      + '<td class="num mono fee-cell" data-i="'+idx+'">'+feeCellText(r)+"</td>"
-      + "<td>"+tx+"</td>"
-      + "</tr>";
+    // one cell per COLS entry, in original index order — emitted in colOrder order
+    const cells = [
+      '<td class="time-cell mono">'+fmtTime(r.timestamp||0)+"</td>",
+      '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(r.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(r.proxyWallet))+"</a></td>",
+      "<td>"+typeBadge+"</td>",
+      "<td>"+mkt+"</td>",
+      '<td class="outcome">'+esc(r.outcome||"")+"</td>",
+      "<td>"+sideBadge+"</td>",
+      '<td class="num mono">'+fmtNum(r.size)+"</td>",
+      '<td class="num mono">'+(r.price!=null?Number(r.price).toFixed(3):"")+"</td>",
+      '<td class="num mono">'+fmtUsd(r.usdcSize)+"</td>",
+      '<td class="num mono fee-cell" data-i="'+idx+'">'+feeCellText(r)+"</td>",
+      "<td>"+tx+"</td>"
+    ];
+    return "<tr>" + colOrder.map(i => cells[i]).join("") + "</tr>";
   }
 
   function renderTableChunk(reset){
@@ -1579,29 +1494,88 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     refreshResults();
   });
 
-  // column show/hide — checkbox list in the right-side Columns panel
+  // column show/hide + drag-to-reorder — checkbox list in the right-side panel.
+  // colOrder maps display position -> original column index; the header row,
+  // body cells (rowHtml), and the nth-child hiding CSS all follow it.
   const COLS = ["Time","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"];
+  const headRow = document.querySelector("thead tr");
+  const origThs = Array.from(headRow.children); // captured in original COLS order
+  var colOrder = COLS.map((_, i) => i);
+  try{
+    const saved = JSON.parse(localStorage.getItem("pmac_col_order"));
+    if(Array.isArray(saved) && saved.length === COLS.length
+      && [...saved].sort((a,b)=>a-b).every((v,i)=>v===i)) colOrder = saved;
+  }catch(e){}
   let hiddenCols = new Set();
   try{ hiddenCols = new Set((JSON.parse(localStorage.getItem("pmac_hidden_cols"))||[]).filter(i => i>=0 && i<COLS.length)); }catch(e){}
   const colStyle = document.createElement("style");
   document.head.appendChild(colStyle);
   function applyHiddenCols(){
+    // hiddenCols holds original indices; nth-child works on display positions
     colStyle.textContent = [...hiddenCols]
-      .map(i => ".table-wrap th:nth-child("+(i+1)+"),.table-wrap td:nth-child("+(i+1)+"){display:none;}")
+      .map(i => colOrder.indexOf(i) + 1)
+      .map(p => ".table-wrap th:nth-child("+p+"),.table-wrap td:nth-child("+p+"){display:none;}")
       .join("");
     try{ localStorage.setItem("pmac_hidden_cols", JSON.stringify([...hiddenCols])); }catch(e){}
     // dot on the collapsed tab when the view is missing columns
     $("sideTab").classList.toggle("has-hidden", hiddenCols.size > 0);
   }
-  $("colsList").innerHTML = COLS.map((c,i) =>
-    '<label class="cols-item"><input type="checkbox" data-col="'+i+'"'+(hiddenCols.has(i) ? "" : " checked")+'> '+esc(c)+'</label>'
-  ).join("");
+  function buildColsList(){
+    $("colsList").innerHTML = colOrder.map((i, pos) =>
+      '<label class="cols-item" draggable="true" data-pos="'+pos+'">'
+      + '<span class="drag-dots" title="Drag to reorder">⠿</span>'
+      + '<input type="checkbox" data-col="'+i+'"'+(hiddenCols.has(i) ? "" : " checked")+'> '+esc(COLS[i])+'</label>'
+    ).join("");
+  }
+  function applyColOrder(){
+    colOrder.forEach(i => headRow.appendChild(origThs[i]));
+    try{ localStorage.setItem("pmac_col_order", JSON.stringify(colOrder)); }catch(e){}
+    applyHiddenCols();
+    buildColsList();
+    if($("tableWrap").classList.contains("active")) renderTableChunk(true);
+  }
   $("colsList").addEventListener("change", e => {
     const i = Number(e.target.dataset.col);
     if(e.target.checked) hiddenCols.delete(i); else hiddenCols.add(i);
     applyHiddenCols();
   });
-  applyHiddenCols();
+  // drag one row of the list onto another to reorder (top/bottom half = above/below)
+  let dragPos = null;
+  const colsListEl = $("colsList");
+  // the ⠿ handle lives inside the <label>: block label activation so a plain
+  // click on the handle doesn't toggle the checkbox
+  colsListEl.addEventListener("click", e => {
+    if(e.target.classList.contains("drag-dots")) e.preventDefault();
+  });
+  const clearDropMarks = () => colsListEl.querySelectorAll(".cols-item").forEach(x => x.classList.remove("dragging","drop-above","drop-below"));
+  colsListEl.addEventListener("dragstart", e => {
+    const it = e.target.closest(".cols-item"); if(!it) return;
+    dragPos = Number(it.dataset.pos);
+    it.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try{ e.dataTransfer.setData("text/plain", String(dragPos)); }catch(_){}
+  });
+  colsListEl.addEventListener("dragend", () => { clearDropMarks(); dragPos = null; });
+  colsListEl.addEventListener("dragover", e => {
+    const it = e.target.closest(".cols-item"); if(!it || dragPos === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const r = it.getBoundingClientRect();
+    colsListEl.querySelectorAll(".drop-above,.drop-below").forEach(x => x.classList.remove("drop-above","drop-below"));
+    it.classList.add(e.clientY > r.top + r.height/2 ? "drop-below" : "drop-above");
+  });
+  colsListEl.addEventListener("drop", e => {
+    const it = e.target.closest(".cols-item"); if(!it || dragPos === null) return;
+    e.preventDefault();
+    const r = it.getBoundingClientRect();
+    let to = Number(it.dataset.pos) + (e.clientY > r.top + r.height/2 ? 1 : 0);
+    const [moved] = colOrder.splice(dragPos, 1);
+    if(to > dragPos) to--;
+    colOrder.splice(to, 0, moved);
+    clearDropMarks(); dragPos = null;
+    applyColOrder();
+  });
+  applyColOrder();
 
   // active-filter chip for badge-click market filters
   function renderChips(){
@@ -1659,6 +1633,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
   });
 
   // ---------- resizable columns (drag edge; double-click edge to reset) ----------
+  const measureCtx = document.createElement("canvas").getContext("2d");
   const tableEl = document.querySelector("table");
   const headerCells = Array.from(tableEl.querySelectorAll("thead th"));
   function freezeWidths(){
@@ -1683,9 +1658,14 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       e.preventDefault(); e.stopPropagation();
       freezeWidths();
       const startX = e.clientX, startW = th.getBoundingClientRect().width;
+      // floor: the column can never be dragged narrower than its own title
+      const cs = getComputedStyle(th);
+      measureCtx.font = cs.fontWeight + " " + cs.fontSize + " " + cs.fontFamily;
+      const minW = Math.ceil(measureCtx.measureText((th.textContent||"").trim()).width * 1.12)
+        + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 10;
       h.classList.add("dragging");
       h.setPointerCapture(e.pointerId);
-      const move = ev => { th.style.width = Math.max(48, startW + ev.clientX - startX) + "px"; };
+      const move = ev => { th.style.width = Math.max(minW, startW + ev.clientX - startX) + "px"; };
       const up = ev => {
         h.removeEventListener("pointermove", move);
         h.removeEventListener("pointerup", up);
@@ -1751,16 +1731,6 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
 
   // one download button whose format follows the active tab
   window.__pmacDebug = {fetchTransfersViaLogs}; // console access for diagnostics
-
-  // clicking an older search chip re-runs that address
-  $("walletsBox").addEventListener("click", e => {
-    const b = e.target.closest(".wallet-tag.hist");
-    if(!b || fetching) return;
-    $("addrInput").value = b.dataset.addr;
-    updateGhost();
-    run();
-  });
-  renderWalletTags(); // show search history on load
 
   $("dlBtn").addEventListener("click", ()=>{
     if($("tabJson").classList.contains("on"))
