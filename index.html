@@ -120,8 +120,28 @@ input[type="search"]{
 /* table */
 .table-wrap{display:none; border:1px solid var(--border); overflow-x:auto;}
 .table-wrap.active{display:block;}
+.table-wrap.grabbable{cursor:grab;} /* interactive cells (headers, badges, links) override with their own cursor */
 .table-wrap.grab-panning{cursor:grabbing; user-select:none;}
 .table-wrap.grab-panning *{cursor:grabbing !important;}
+/* one-time "drag to scroll" pill: sticky so it stays centered in the visible
+   part of the wrap even when the content is scrolled sideways */
+.drag-hint{position:sticky; left:0; height:0; overflow:visible; display:none; z-index:5;}
+.drag-hint.show{display:block;}
+.drag-hint .pill{
+  position:absolute; top:56px; left:50%;
+  display:flex; align-items:center; gap:8px; white-space:nowrap; pointer-events:none;
+  background:var(--foreground); color:var(--background);
+  font-size:12px; font-weight:500; padding:7px 14px; border-radius:999px;
+  box-shadow:0 4px 16px rgba(0,0,0,.3);
+  animation:hintNudge 1.5s ease-in-out infinite;
+}
+@keyframes hintNudge{
+  0%, 100%{transform:translateX(calc(-50% - 10px));}
+  50%{transform:translateX(calc(-50% + 10px));}
+}
+@media (prefers-reduced-motion: reduce){
+  .drag-hint .pill{animation:none; transform:translateX(-50%);}
+}
 table{width:100%; border-collapse:collapse; font-size:13px;}
 th{
   text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:500;
@@ -369,6 +389,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     </div>
 
     <div class="table-wrap" id="tableWrap">
+      <div class="drag-hint" id="dragHint" aria-hidden="true"><span class="pill">↔&nbsp; Drag the table to scroll</span></div>
       <table>
         <thead>
           <tr>
@@ -1157,7 +1178,37 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     $("tableWrap").classList.add("active");
     $("dlBtn").textContent = "Download CSV";
     renderTableChunk(true);
+    updateGrabAffordance();
   }
+
+  // ---------- drag-to-scroll affordance ----------
+  // grab cursor whenever the table overflows, plus a one-time animated pill;
+  // the pill never comes back after the user has actually panned once.
+  const DRAG_HINT_KEY = "pmac_drag_hint_done";
+  let dragHintTimer = null;
+  function updateGrabAffordance(){
+    const wrap = $("tableWrap");
+    const overflows = wrap.scrollWidth > wrap.clientWidth;
+    wrap.classList.toggle("grabbable", overflows);
+    let done = null;
+    try{ done = localStorage.getItem(DRAG_HINT_KEY); }catch(e){}
+    if(overflows && !done && wrap.classList.contains("active")){
+      $("dragHint").classList.add("show");
+      clearTimeout(dragHintTimer);
+      dragHintTimer = setTimeout(()=>$("dragHint").classList.remove("show"), 8000);
+    }else if(!overflows){
+      $("dragHint").classList.remove("show");
+    }
+  }
+  function dismissDragHint(learned){
+    clearTimeout(dragHintTimer);
+    $("dragHint").classList.remove("show");
+    if(learned){ try{ localStorage.setItem(DRAG_HINT_KEY, "1"); }catch(e){} }
+  }
+  window.addEventListener("resize", ()=>{ if($("tableWrap").classList.contains("active")) updateGrabAffordance(); });
+  // scrolling any other way (scrollbar, shift+wheel, trackpad) hides the pill for
+  // now but lets it reappear on a later search, since they may not have seen it
+  $("tableWrap").addEventListener("scroll", ()=>dismissDragHint(false), {passive:true});
 
   // pretty JSON with syntax highlighting (capped for DOM safety)
   const JSON_VIEW_CAP = 1000;
@@ -1584,6 +1635,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
       if(!panning){
         if(Math.abs(dx) < THRESHOLD) return;
         panning = true;
+        dismissDragHint(true); // they've found it — never show the pill again
         wrap.classList.add("grab-panning");
         try{ wrap.setPointerCapture(pid); }catch(_){}
         const sel = window.getSelection && window.getSelection();
