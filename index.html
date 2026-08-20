@@ -526,39 +526,55 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     }
   }
   // The API rejects offset > 5000, so one offset run only covers the most recent
-  // ~5,500 records. To go deeper we restart the run with end= set to the oldest
-  // timestamp fetched so far (end is inclusive, so the boundary page overlaps —
-  // the seen-set dedupes it) and keep walking back in time until the feed is done.
-  async function fetchWallet(addr, params, onPage){
+  // ~5,500 records. All 11 offset pages of a window are fired concurrently (the
+  // empty tail pages of a small wallet return [] near-instantly, and 429s back
+  // off inside fetchWithRetry). To go deeper we start the next window with end=
+  // set to the oldest timestamp fetched so far (end is inclusive, so the boundary
+  // page overlaps — the seen-set dedupes it) until the feed is exhausted.
+  // onChunk (optional) receives each window's new records as soon as it lands,
+  // so results can render while deeper windows are still fetching.
+  async function fetchWallet(addr, params, onPage, onChunk){
     const out = [];
     const seen = new Set();
     let endCursor = params.end ? Number(params.end) : null;
     let totalPages = 0;
     for(;;){
-      let windowDone = false;
-      for(let page=0; page<MAX_PAGES_PER_WALLET; page++){
-        const qp = {user:addr, limit:String(PAGE_SIZE), offset:String(page*PAGE_SIZE), ...params};
-        if(endCursor) qp.end = String(endCursor);
-        const res = await fetchWithRetry(API + "?" + new URLSearchParams(qp).toString());
-        if(!res.ok){
-          let msg = "HTTP " + res.status;
-          try{ const j = await res.json(); if(j && j.error) msg += ": " + j.error; }catch(e){}
-          if(!out.length) throw new Error(msg);
-          // mid-pagination failure: keep what we have, note it
-          return {records:out, truncated:true, reason:msg};
-        }
-        const rows = await res.json();
+      const base = {user:addr, limit:String(PAGE_SIZE), ...params};
+      if(endCursor) base.end = String(endCursor);
+      const pages = await Promise.allSettled(
+        Array.from({length: MAX_PAGES_PER_WALLET}, (_, p) =>
+          fetchWithRetry(API + "?" + new URLSearchParams({...base, offset:String(p*PAGE_SIZE)}).toString())
+            .then(async res => {
+              if(!res.ok){
+                let msg = "HTTP " + res.status;
+                try{ const j = await res.json(); if(j && j.error) msg += ": " + j.error; }catch(e){}
+                throw new Error(msg);
+              }
+              return res.json();
+            })));
+      // consume in page order; a failed page invalidates everything after it
+      let windowDone = false, failed = null;
+      const added = [];
+      for(const p of pages){
+        if(p.status === "rejected"){ failed = (p.reason && p.reason.message) || "request failed"; break; }
+        const rows = p.value;
         pagesFetched++; totalPages++;
         if(Array.isArray(rows)){
           for(const r of rows){
             const k = (r.transactionHash||"") + ":" + r.type + ":" + (r.asset||"") + ":" + (r.timestamp||0) + ":" + (r.size||0) + ":" + (r.price||0);
             if(seen.has(k)) continue;
             seen.add(k);
-            out.push(r);
+            out.push(r); added.push(r);
           }
         }
-        onPage(addr, totalPages, out.length);
         if(!Array.isArray(rows) || rows.length < PAGE_SIZE){ windowDone = true; break; }
+      }
+      onPage(addr, totalPages, out.length);
+      if(added.length && onChunk) onChunk(added);
+      if(failed){
+        if(!out.length) throw new Error(failed);
+        // mid-pagination failure: keep what we have, note it
+        return {records:out, truncated:true, reason:failed};
       }
       if(windowDone) return {records:out, truncated:false};
       if(out.length >= MAX_RECORDS_PER_WALLET)
@@ -598,7 +614,8 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     const a = addr.toLowerCase();
     const byTx = new Map();
     let truncated = false;
-    for(const token of USDC_TOKENS){
+    // the three token scans are independent — run them concurrently
+    await Promise.all(USDC_TOKENS.map(async token => {
       let qs = "type=ERC-20&token=" + token;
       for(let page=0; page<DW_MAX_PAGES_PER_TOKEN; page++){
         // very active wallets can take minutes to index on the explorer — give up
@@ -633,7 +650,7 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
         if(page === DW_MAX_PAGES_PER_TOKEN - 1 && j.next_page_params) truncated = true;
         qs = "type=ERC-20&token=" + token + "&" + new URLSearchParams(j.next_page_params).toString();
       }
-    }
+    }));
     const out = [];
     for(const [txh, g] of byTx){
       const net = g.in - g.out;
@@ -846,58 +863,71 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     const notes = [];
 
     try{
-      for(const addr of valid){
-        $("progressText").textContent = "Fetching " + short(addr) + "…";
-        const r = await fetchWallet(addr, params, (a,p,count)=>{
-          $("progressText").textContent = short(a) + " · page " + p + " · " + count.toLocaleString() + " records";
-        });
-        allRecords.push(...r.records);
-        if(r.truncated){ feedTruncated = true; notes.push(short(addr) + ": partial results (" + r.reason + ")"); }
-        {
-          $("progressText").textContent = short(addr) + " · checking on-chain USDC transfers…";
+      // Everything runs concurrently: all wallets at once, and per wallet the
+      // main feed, the on-chain D/W scan, and the rebate fetches all start
+      // together. The table renders as soon as the first feed window lands and
+      // later arrivals merge in live, instead of blocking behind the slowest
+      // fetch (the explorer scan can take 15s+ on busy wallets).
+      const progressiveRender = () => {
+        allRecords.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        renderAll();
+      };
+      $("progressText").textContent = "Fetching " + valid.map(short).join(", ") + "…";
+      await Promise.all(valid.map(async addr => {
+        const startTs = params.start ? Number(params.start) : null;
+        // on-chain USDC deposits/withdrawals, with the topic-indexed-log fallback
+        // (fast even for busy wallets, but covers new-style PUSD/relay flows only)
+        const dwP = (async () => {
           try{
-            const dw = await fetchTransfers(addr, params.start ? Number(params.start) : null);
-            // drop txs already represented as activity records (redeems/rewards that
-            // settle through the PUSD wrapper would otherwise look like deposits)
-            const seenTxs = new Set(r.records.map(x => (x.transactionHash||"").toLowerCase()).filter(Boolean));
-            const recs = dw.records.filter(x => !seenTxs.has(x.transactionHash.toLowerCase()));
-            allRecords.push(...recs);
-            if(dw.truncated) notes.push(short(addr) + ": deposits/withdrawals limited to the most recent " + (DW_MAX_PAGES_PER_TOKEN*50) + " transfers per token");
+            return {kind:"chain", ...(await fetchTransfers(addr, startTs))};
           }catch(e){
-            // fall back to topic-indexed log queries (fast even for busy wallets,
-            // but covers new-style PUSD/relay flows only)
             try{
-              $("progressText").textContent = short(addr) + " · explorer slow, trying topic-indexed logs…";
-              const startTs = params.start ? Number(params.start) : null;
-              const dw2 = await fetchTransfersViaLogs(addr, startTs);
-              const seenTxs = new Set(r.records.map(x => (x.transactionHash||"").toLowerCase()).filter(Boolean));
-              const recs = dw2.records.filter(x => !seenTxs.has(x.transactionHash.toLowerCase()));
-              allRecords.push(...recs);
-              notes.push(short(addr) + ": deposits/withdrawals via topic-indexed logs — new-style (PUSD/relay) transfers only"
-                + (startTs ? "" : ", last ~90 days"
-                ) + (dw2.truncated ? "; hit the 1,000-event cap so results may be partial" : ""));
+              return {kind:"logs", ...(await fetchTransfersViaLogs(addr, startTs))};
             }catch(e2){
               const why = (e.name === "TimeoutError" || e2.name === "TimeoutError")
                 ? "explorer timed out — wallet has too many transfers" : e2.message;
-              notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + why + ")");
+              return {kind:"none", why};
             }
           }
-        }
+        })();
         // rebates are sparse but pay out daily — the offset-capped main feed can miss
         // them on hyper-active wallets, so fetch them explicitly and merge (deduped)
-        try{
-          const seen = new Set(allRecords.map(x => x.type + ":" + (x.transactionHash||"").toLowerCase()));
-          for(const rt of ["TAKER_REBATE","MAKER_REBATE"]){
-            const qs = new URLSearchParams({user:addr, limit:"500", offset:"0", type:rt, ...params});
-            const res = await fetchWithRetry(API + "?" + qs.toString(), 3, 15000);
-            if(!res.ok) continue;
-            const rows = await res.json();
-            if(Array.isArray(rows))
-              allRecords.push(...rows.filter(x => !seen.has(x.type + ":" + (x.transactionHash||"").toLowerCase())));
-          }
-        }catch(e){}
+        const rebatesP = Promise.all(["TAKER_REBATE","MAKER_REBATE"].map(rt =>
+          fetchWithRetry(API + "?" + new URLSearchParams({user:addr, limit:"500", offset:"0", type:rt, ...params}).toString(), 3, 15000)
+            .then(res => res.ok ? res.json() : [])
+            .then(rows => Array.isArray(rows) ? rows : [])
+            .catch(() => [])
+        )).then(parts => parts.flat());
         fetchWalletMeta(addr).then(renderWalletTags);
-      }
+
+        const r = await fetchWallet(addr, params, (a,p,count)=>{
+          $("progressText").textContent = short(a) + " · page " + p + " · " + count.toLocaleString() + " records";
+        }, chunk => { allRecords.push(...chunk); progressiveRender(); });
+        if(r.truncated){ feedTruncated = true; notes.push(short(addr) + ": partial results (" + r.reason + ")"); }
+
+        const rebates = await rebatesP;
+        {
+          const seen = new Set(allRecords.map(x => x.type + ":" + (x.transactionHash||"").toLowerCase()));
+          const fresh = rebates.filter(x => x && !seen.has(x.type + ":" + (x.transactionHash||"").toLowerCase()));
+          if(fresh.length){ allRecords.push(...fresh); progressiveRender(); }
+        }
+
+        const dw = await dwP;
+        if(dw.kind === "none"){
+          notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + dw.why + ")");
+        }else{
+          // drop txs already represented as activity records (redeems/rewards that
+          // settle through the PUSD wrapper would otherwise look like deposits)
+          const seenTxs = new Set(r.records.map(x => (x.transactionHash||"").toLowerCase()).filter(Boolean));
+          const recs = dw.records.filter(x => !seenTxs.has(x.transactionHash.toLowerCase()));
+          if(recs.length){ allRecords.push(...recs); progressiveRender(); }
+          if(dw.kind === "chain" && dw.truncated)
+            notes.push(short(addr) + ": deposits/withdrawals limited to the most recent " + (DW_MAX_PAGES_PER_TOKEN*50) + " transfers per token");
+          if(dw.kind === "logs")
+            notes.push(short(addr) + ": deposits/withdrawals via topic-indexed logs — new-style (PUSD/relay) transfers only"
+              + (startTs ? "" : ", last ~90 days") + (dw.truncated ? "; hit the 1,000-event cap so results may be partial" : ""));
+        }
+      }));
       renderWalletTags();
       $("pnlWindow").textContent = "(" + pnlPlan(win).label + ")";
       $("stPnl").textContent = "…";
