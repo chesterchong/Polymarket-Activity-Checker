@@ -123,24 +123,37 @@ input[type="search"]{
 .table-wrap.grabbable{cursor:grab;} /* interactive cells (headers, badges, links) override with their own cursor */
 .table-wrap.grab-panning{cursor:grabbing; user-select:none;}
 .table-wrap.grab-panning *{cursor:grabbing !important;}
-/* one-time "drag to scroll" pill: sticky so it stays centered in the visible
-   part of the wrap even when the content is scrolled sideways */
-.drag-hint{position:sticky; left:0; height:0; overflow:visible; display:none; z-index:5;}
+/* one-time "drag to scroll" ghost hand: a greyed-out grab-cursor watermark over
+   the table (pointer-events:none, low opacity — wallpaper-like) that presses
+   down with an expanding ripple circle, drags sideways, and releases on a loop.
+   Sticky so it stays centered in the visible slice of the wrap. */
+.drag-hint{position:sticky; left:0; height:0; overflow:visible; display:none; z-index:5; pointer-events:none;}
 .drag-hint.show{display:block;}
-.drag-hint .pill{
-  position:absolute; top:56px; left:50%;
-  display:flex; align-items:center; gap:8px; white-space:nowrap; pointer-events:none;
-  background:var(--foreground); color:var(--background);
-  font-size:12px; font-weight:500; padding:7px 14px; border-radius:999px;
-  box-shadow:0 4px 16px rgba(0,0,0,.3);
-  animation:hintNudge 1.5s ease-in-out infinite;
+.drag-hint .ghost{position:absolute; top:48px; left:50%; width:160px; height:160px; margin-left:-80px; color:var(--muted-foreground); opacity:.4;}
+.drag-hint .ripple{
+  position:absolute; left:50%; top:50%; width:70px; height:70px; margin:-35px 0 0 -35px;
+  border:3px solid currentColor; border-radius:50%; opacity:0;
+  animation:hintRipple 2.6s ease-out infinite;
 }
-@keyframes hintNudge{
-  0%, 100%{transform:translateX(calc(-50% - 10px));}
-  50%{transform:translateX(calc(-50% + 10px));}
+.drag-hint .hand{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; animation:hintHand 2.6s ease-in-out infinite;}
+.drag-hint .hand svg{width:76px; height:76px;}
+@keyframes hintRipple{
+  0%, 14%{transform:scale(.35); opacity:0;}
+  20%{opacity:.9;}
+  48%{transform:scale(1.6); opacity:0;}
+  100%{transform:scale(1.6); opacity:0;}
+}
+@keyframes hintHand{
+  0%{transform:translateX(0) scale(1);}
+  16%{transform:translateX(0) scale(.88);}    /* press down */
+  42%{transform:translateX(38px) scale(.88);} /* drag right */
+  72%{transform:translateX(-38px) scale(.88);}/* drag left */
+  88%{transform:translateX(0) scale(.88);}
+  100%{transform:translateX(0) scale(1);}     /* release */
 }
 @media (prefers-reduced-motion: reduce){
-  .drag-hint .pill{animation:none; transform:translateX(-50%);}
+  .drag-hint .hand{animation:none;}
+  .drag-hint .ripple{animation:none; opacity:.6; transform:scale(1);}
 }
 table{width:100%; border-collapse:collapse; font-size:13px;}
 th{
@@ -389,7 +402,19 @@ button.wallet-tag.hist .wtype{color:var(--muted-foreground); font-weight:400;}
     </div>
 
     <div class="table-wrap" id="tableWrap">
-      <div class="drag-hint" id="dragHint" aria-hidden="true"><span class="pill">↔&nbsp; Drag the table to scroll</span></div>
+      <div class="drag-hint" id="dragHint" aria-hidden="true">
+        <div class="ghost">
+          <span class="ripple"></span>
+          <span class="hand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 11V6a2 2 0 0 0-4 0v5"/>
+              <path d="M14 10V4a2 2 0 0 0-4 0v2"/>
+              <path d="M10 10.5V6a2 2 0 0 0-4 0v8"/>
+              <path d="m7 15-1.76-1.76a2 2 0 0 0-2.83 2.82l3.6 3.6C7.5 21.14 9.2 22 12 22h2a8 8 0 0 0 8-8V7a2 2 0 0 0-4 0v5"/>
+            </svg>
+          </span>
+        </div>
+      </div>
       <table>
         <thead>
           <tr>
