@@ -110,20 +110,50 @@ select:focus-visible,.btn:focus-visible,textarea:focus-visible,.tab:focus-visibl
 .stat .value.neg{color:var(--destructive);}
 .stat .label span{text-transform:none; letter-spacing:0;}
 
-/* results header */
-.results-bar{display:none; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;}
+/* results toolbar: one card, two rows, a consistent 32px pill control language */
+.results-bar{
+  display:none; flex-direction:column; gap:10px;
+  border:1px solid var(--border); background:var(--card); padding:12px 14px;
+}
 .results-bar.active{display:flex;}
-.tabs{display:flex; border:1px solid var(--border);}
+.rb-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+.flex-spacer{flex:1 1 0; min-width:0;}
+.tabs{display:inline-flex; border:1px solid var(--border); border-radius:999px; overflow:hidden; background:var(--background);}
 .tab{
-  height:30px; padding:0 14px; font-size:13px; font-family:inherit; border:none; cursor:pointer;
+  height:32px; padding:0 16px; font-size:13px; font-family:inherit; border:none; cursor:pointer;
   background:transparent; color:var(--muted-foreground);
 }
+.tab + .tab{border-left:1px solid var(--border);}
+.tab:hover{color:var(--foreground);}
 .tab.on{background:var(--primary); color:var(--primary-foreground);}
-.results-actions{display:flex; gap:8px; flex-wrap:wrap;}
-input[type="search"]{
-  height:30px; border:1px solid var(--border); background:var(--card); color:var(--foreground);
-  font-family:inherit; font-size:13px; padding:0 10px; width:200px;
+/* pill selects with a custom chevron; wells sit slightly darker than the card */
+.results-bar select{
+  appearance:none; -webkit-appearance:none;
+  border-radius:999px; background-color:var(--background); padding:0 30px 0 14px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888e99' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 12px center;
 }
+.results-bar .seg{background:var(--background);}
+.results-bar .seg .seg-btn{height:32px;}
+.results-bar .btn{border-radius:999px; background:var(--background); padding:0 14px;}
+.btn-ghost{border-color:transparent !important; background:transparent !important; color:var(--muted-foreground);}
+.btn-ghost:hover{color:var(--foreground); background:var(--muted) !important;}
+.search-wrap{position:relative; display:inline-flex;}
+.search-ico{position:absolute; left:12px; top:50%; transform:translateY(-50%); width:14px; height:14px; color:var(--muted-foreground); pointer-events:none;}
+input[type="search"]{
+  height:32px; border:1px solid var(--border); border-radius:999px; background:var(--background); color:var(--foreground);
+  font-family:inherit; font-size:13px; padding:0 14px 0 33px; width:220px;
+}
+input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-offset:1px;}
+.date-range{
+  display:inline-flex; align-items:center; height:32px; gap:2px;
+  border:1px solid var(--border); border-radius:999px; background:var(--background); padding:0 8px 0 14px;
+}
+.date-range:focus-within{border-color:var(--primary);}
+.date-range .dr-label{font-size:12px; color:var(--muted-foreground); margin-right:6px;}
+.date-range .dr-sep{color:var(--muted-foreground); font-size:12px; padding:0 2px;}
+.date-range input[type="date"]{border:none; background:transparent; height:100%;}
+.date-range input[type="date"]:focus-visible{outline:none;}
 
 /* table */
 /* results area: table/json on the left, collapsible filter sidebar on the right.
@@ -264,13 +294,11 @@ footer a{color:inherit;}
 .seg-btn + .seg-btn{border-left:1px solid var(--border);}
 .seg-btn.on{background:var(--primary); color:var(--primary-foreground);}
 .toolbar .seg .seg-btn{height:32px;}
-.seg-label{font-size:12px; color:var(--muted-foreground);}
 
 /* results bar extras */
-.rb-left{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
 input[type="date"]{height:30px; border:1px solid var(--border); background:var(--card); color:var(--foreground); font-family:inherit; font-size:12px; padding:0 8px; color-scheme:light dark;}
 .chips{display:inline-flex; gap:6px;}
-.chip{height:30px; border:1px dashed var(--primary); color:var(--primary); background:transparent; font-size:12px; padding:0 12px; cursor:pointer; font-family:inherit; border-radius:999px;}
+.chip{height:32px; border:1px dashed var(--primary); color:var(--primary); background:transparent; font-size:12px; padding:0 14px; cursor:pointer; font-family:inherit; border-radius:999px;}
 .chip:hover{background:rgba(22,93,252,.08);}
 
 /* sortable + resizable columns */
@@ -376,12 +404,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     <div class="wallets" id="walletsBox"></div>
 
     <div class="results-bar" id="resultsBar">
-      <div class="rb-left">
+      <div class="rb-row">
         <div class="tabs" role="tablist">
           <button class="tab on" id="tabTable" role="tab">Table</button>
           <button class="tab" id="tabPositions" role="tab">Positions</button>
           <button class="tab" id="tabJson" role="tab">JSON</button>
         </div>
+        <span class="flex-spacer"></span>
+        <span class="search-wrap">
+          <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
+        </span>
+        <button class="btn" id="dlBtn">Download CSV</button>
+      </div>
+      <div class="rb-row">
         <select id="typeSel" aria-label="Activity type">
           <option value="">All types</option>
           <option value="TRADE">Trade</option>
@@ -407,9 +443,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="seg-btn" data-v="single">Single</button>
           <button type="button" class="seg-btn" data-v="combo">Combo</button>
         </div>
-        <span class="seg-label">Date</span>
-        <input type="date" id="dateFrom" aria-label="From date" title="Show records from this date">
-        <input type="date" id="dateTo" aria-label="To date" title="Show records up to this date">
+        <span class="date-range" title="Show records between these dates">
+          <span class="dr-label">Date</span>
+          <input type="date" id="dateFrom" aria-label="From date">
+          <span class="dr-sep">–</span>
+          <input type="date" id="dateTo" aria-label="To date">
+        </span>
         <select id="rowsSel" aria-label="Rows to display" title="Rows to display">
           <option value="25">25 rows</option>
           <option value="50">50 rows</option>
@@ -419,11 +458,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <button type="button" class="chip" id="dwChip" title="Show only deposits and withdrawals">D/W</button>
         <button type="button" class="chip" id="openChip" title="Show only trades on markets this wallet has not redeemed yet">Not redeemed</button>
         <span id="chips" class="chips"></span>
-        <button class="btn" id="resetBtn" title="Reset all filters">Reset filters</button>
-      </div>
-      <div class="results-actions">
-        <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
-        <button class="btn" id="dlBtn">Download CSV</button>
+        <span class="flex-spacer"></span>
+        <button class="btn btn-ghost" id="resetBtn" title="Reset all filters">Reset filters</button>
       </div>
     </div>
 
