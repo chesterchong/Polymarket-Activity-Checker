@@ -208,12 +208,25 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 td.pos{color:var(--success);}
 td.neg{color:var(--destructive);}
 .pnl-pct{opacity:.7; font-size:11px;}
-/* live price update flashes */
-@keyframes pxUp{from{background:rgba(34,197,94,.28);}to{background:transparent;}}
-@keyframes pxDown{from{background:rgba(239,68,68,.28);}to{background:transparent;}}
-td.px-up{animation:pxUp 1s ease-out;}
-td.px-down{animation:pxDown 1s ease-out;}
-@media (prefers-reduced-motion: reduce){ td.px-up, td.px-down{animation:none;} }
+/* live price ticks: background flash + temporary text tint, stock-ticker style */
+@keyframes pxUp{0%{background:rgba(34,197,94,.30); color:var(--success);}60%{color:var(--success);}100%{background:transparent;}}
+@keyframes pxDown{0%{background:rgba(239,68,68,.30); color:var(--destructive);}60%{color:var(--destructive);}100%{background:transparent;}}
+.px-up{animation:pxUp 1.2s ease-out;}
+.px-down{animation:pxDown 1.2s ease-out;}
+.tick-arrow{font-size:9px; vertical-align:1px;}
+.tick-arrow.up{color:var(--success);}
+.tick-arrow.down{color:var(--destructive);}
+/* breathing "live" indicator */
+.live-pill{display:inline-flex; align-items:center; gap:5px; margin-left:8px; color:var(--success); font-weight:500;}
+.live-dot{width:7px; height:7px; border-radius:50%; background:var(--success); animation:liveBreathe 1.8s ease-in-out infinite;}
+@keyframes liveBreathe{
+  0%, 100%{opacity:.35; box-shadow:0 0 0 0 rgba(34,197,94,0);}
+  50%{opacity:1; box-shadow:0 0 7px 1px rgba(34,197,94,.5);}
+}
+@media (prefers-reduced-motion: reduce){
+  .px-up, .px-down{animation:none;}
+  .live-dot{animation:none; opacity:1;}
+}
 .table-wrap.grabbable{cursor:grab;} /* interactive cells (headers, badges, links) override with their own cursor */
 .table-wrap.grab-panning{cursor:grabbing; user-select:none;}
 .table-wrap.grab-panning *{cursor:grabbing !important;}
@@ -1562,7 +1575,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     document.querySelectorAll('.fchip[data-cat="single"] .cnt, .fchip[data-cat="combo"] .cnt').forEach(el =>
       el.textContent = (catCounts[el.parentElement.dataset.cat] || 0).toLocaleString());
     const rows = visiblePositions();
-    $("posNote").textContent = buildPosNote(rows, q);
+    setPosNote(buildPosNote(rows, q));
     posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
     hideTooltip(); // rows are being replaced under any open tooltip
     $("posBody").innerHTML = posRendered.map((p, i) => posRowHtml(p, i)).join("");
@@ -1590,6 +1603,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
     return note;
   }
+  function setPosNote(note){
+    $("posNote").innerHTML = esc(note)
+      + (liveActive ? '<span class="live-pill"><span class="live-dot"></span>live</span>' : "");
+  }
 
   // ---------- live prices for open single positions (CLOB midpoints, every 10s) ----------
   // One batched POST per tick, only while the positions view is visible in a
@@ -1616,48 +1633,82 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         }).then(r => r.ok ? r.json() : {})));
       if(myRun !== posRunSeq) return; // a new search landed while we were fetching
       const prices = Object.assign({}, ...parts);
-      const changed = new Map(); // position -> flash direction class
+      const changed = new Map(); // position -> {dir, old values for the tween start}
+      let totalDelta = 0;
       for(const p of targets){
         const px = Number(prices[String(p.asset)]);
         if(!isFinite(px) || px <= 0) continue; // resolved/bookless tokens keep their last price
         const old = Number(p.curPrice) || 0;
         if(Math.abs(px - old) < 0.0005) continue;
         const oldVal = Number(p.currentValue) || 0;
+        const oldPnl = Number(p.cashPnl) || 0;
         p.curPrice = px;
         p.currentValue = (Number(p.size) || 0) * px;
-        p.cashPnl = (Number(p.cashPnl) || 0) + (p.currentValue - oldVal);
+        p.cashPnl = oldPnl + (p.currentValue - oldVal);
         if(Number(p.initialValue)) p.percentPnl = p.cashPnl / Number(p.initialValue) * 100;
-        changed.set(p, px > old ? "px-up" : "px-down");
+        totalDelta += p.currentValue - oldVal;
+        changed.set(p, {dir: px > old ? "px-up" : "px-down", oldPx: old, oldVal, oldPnl});
       }
       liveActive = true;
-      applyLivePrices(changed);
-    }catch(e){ /* transient — next tick retries */ }
+      applyLivePrices(changed, totalDelta);
+    }catch(e){ console.warn("live prices tick failed:", e); /* transient — next tick retries */ }
     finally{ liveBusy = false; }
   }
-  function applyLivePrices(changed){
+  // stock-ticker motion: the number rolls from old to new over ~700ms (easeOut)
+  // while the cell flashes green/red, and the price keeps a last-tick ▲/▼ arrow
+  function tweenCell(td, from, to, fmt, dir){
+    const tok = (td.__tok = (td.__tok || 0) + 1); // newer tween on the same cell wins
+    if(td.__raf){ cancelAnimationFrame(td.__raf); td.__raf = null; }
+    td.classList.remove("px-up","px-down");
+    void td.offsetWidth;
+    td.classList.add(dir);
+    const done = () => { td.__raf = null; td.innerHTML = fmt(to); };
+    if(!isFinite(from) || matchMedia("(prefers-reduced-motion: reduce)").matches){ done(); return; }
+    const dur = 700, t0 = performance.now();
+    const step = now => {
+      if(tok !== td.__tok) return;
+      const k = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      if(k < 1){ td.innerHTML = fmt(from + (to - from) * e); td.__raf = requestAnimationFrame(step); }
+      else done();
+    };
+    td.__raf = requestAnimationFrame(step);
+    // rAF freezes in hidden tabs — guarantee the final value lands regardless
+    setTimeout(() => { if(tok === td.__tok && td.__raf){ cancelAnimationFrame(td.__raf); done(); } }, dur + 300);
+  }
+  const tickArrow = dir => ' <span class="tick-arrow ' + (dir === "px-up" ? "up" : "down") + '">'
+    + (dir === "px-up" ? "▲" : "▼") + "</span>";
+  function applyLivePrices(changed, totalDelta){
     const body = $("posBody");
     // original column indices: 5 = Cur price, 6 = Value, 7 = PnL
     const curPos = posCols.order.indexOf(5), valPos = posCols.order.indexOf(6), pnlPos = posCols.order.indexOf(7);
     posRendered.forEach((p, i) => {
-      if(!changed.has(p)) return;
+      const ch = changed.get(p);
+      if(!ch) return;
       const row = body.children[i];
       if(!row) return;
-      const dir = changed.get(p);
-      const flash = td => { td.classList.remove("px-up","px-down"); void td.offsetWidth; td.classList.add(dir); };
       const cur = row.cells[curPos], val = row.cells[valPos], pnlTd = row.cells[pnlPos];
-      if(cur){ cur.textContent = Number(p.curPrice).toFixed(3); flash(cur); }
-      if(val){ val.textContent = "$" + fmtUsd(p.currentValue); flash(val); }
+      if(cur) tweenCell(cur, ch.oldPx, Number(p.curPrice), v => v.toFixed(3) + tickArrow(ch.dir), ch.dir);
+      if(val) tweenCell(val, ch.oldVal, Number(p.currentValue), v => "$" + fmtUsd(v), ch.dir);
       if(pnlTd){
-        const pnl = Number(p.cashPnl) || 0, pct = Number(p.percentPnl);
+        const pnl = Number(p.cashPnl) || 0;
+        const initial = Number(p.initialValue) || 0;
         pnlTd.classList.toggle("pos", pnl >= 0);
         pnlTd.classList.toggle("neg", pnl < 0);
-        pnlTd.innerHTML = (pnl < 0 ? "-$" : "$") + fmtUsd(Math.abs(pnl))
-          + (isFinite(pct) ? ' <span class="pnl-pct">(' + (pct >= 0 ? "+" : "") + pct.toFixed(1) + '%)</span>' : "");
-        flash(pnlTd);
+        tweenCell(pnlTd, ch.oldPnl, pnl, v =>
+          (v < 0 ? "-$" : "$") + fmtUsd(Math.abs(v))
+          + (initial ? ' <span class="pnl-pct">(' + (v >= 0 ? "+" : "") + (v / initial * 100).toFixed(1) + '%)</span>' : ""),
+          ch.dir);
       }
     });
-    $("posNote").textContent = buildPosNote(visiblePositions(), $("searchBox").value.trim())
-      + (liveActive ? " · ⦿ live" : "");
+    // the stats card's Portfolio value drifts live with the same deltas
+    if(totalDelta){
+      const el = $("stPortfolio");
+      const curTxt = parseFloat((el.textContent || "").replace(/[$,]/g, ""));
+      if(isFinite(curTxt))
+        tweenCell(el, curTxt, curTxt + totalDelta, v => "$" + fmtUsd(v), totalDelta > 0 ? "px-up" : "px-down");
+    }
+    setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
   }
   setInterval(pollLivePrices, LIVE_MS);
 
