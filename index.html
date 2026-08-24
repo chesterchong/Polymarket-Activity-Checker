@@ -330,6 +330,11 @@ input[type="date"]{height:30px; border:1px solid var(--border); background:var(-
   background:var(--muted); color:var(--muted-foreground); font-size:10px; font-variant-numeric:tabular-nums;
 }
 .fchip.on .cnt{background:rgba(255,255,255,.22); color:var(--primary-foreground);}
+/* Single/Combo counts only make sense on the positions view */
+.fchip[data-cat] .cnt{display:none;}
+.results-bar.pos-mode .fchip[data-cat] .cnt{display:inline-block;}
+/* date + search wrap together as one unit, staying on the same row */
+.rb-group{display:inline-flex; align-items:center; gap:8px;}
 .fchip-sep{width:1px; height:18px; background:var(--border); margin:0 4px; flex-shrink:0;}
 .chips{display:inline-flex; gap:6px;}
 .chip{height:32px; border:1px dashed var(--primary); color:var(--primary); background:transparent; font-size:12px; padding:0 14px; cursor:pointer; font-family:inherit; border-radius:999px;}
@@ -477,8 +482,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <div class="fchips" role="group" aria-label="Category filter">
           <button type="button" class="fchip" id="fundingChip" title="Deposits, withdrawals and user-to-user transfers (tips)">Funding only</button>
           <span class="fchip-sep" aria-hidden="true"></span>
-          <button type="button" class="fchip" data-cat="single" title="Single-market trades">Single</button>
-          <button type="button" class="fchip" data-cat="combo" title="Combo trades">Combo</button>
+          <button type="button" class="fchip" data-cat="single" title="Single-market trades">Single <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-cat="combo" title="Combo trades">Combo <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-cat="deposit" title="USDC deposits, including transfers received from other users">Deposit</button>
           <button type="button" class="fchip" data-cat="withdrawal" title="USDC withdrawals, including transfers sent to other users">Withdrawal</button>
           <button type="button" class="fchip" data-cat="rewards" title="Rewards, yield, rebates and referral payouts">Rewards</button>
@@ -489,15 +494,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="fchip" data-pstat="loss" title="Resolved as a loss, or valued at $0">Loss <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="redeemable" title="Won but not yet redeemed">Redeemable <span class="cnt">0</span></button>
         </div>
-        <span class="date-range" title="Show records between these dates">
-          <span class="dr-label">Date</span>
-          <input type="date" id="dateFrom" aria-label="From date">
-          <span class="dr-sep">–</span>
-          <input type="date" id="dateTo" aria-label="To date">
-        </span>
-        <span class="search-wrap">
-          <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
+        <span class="rb-group">
+          <span class="date-range" title="Show records between these dates">
+            <span class="dr-label">Date</span>
+            <input type="date" id="dateFrom" aria-label="From date">
+            <span class="dr-sep">–</span>
+            <input type="date" id="dateTo" aria-label="To date">
+          </span>
+          <span class="search-wrap">
+            <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
+          </span>
         </span>
         <span id="chips" class="chips"></span>
         <span class="flex-spacer"></span>
@@ -1457,12 +1464,15 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
   // positions honor the search box, the Single/Combo chips, and the status chips.
   // basePositions is the set BEFORE status filtering — the chip counts read it.
-  function basePositions(){
+  function searchPositions(){
     const q = $("searchBox").value.trim().toLowerCase();
-    let rows = allPositions.filter(p => !q
+    return allPositions.filter(p => !q
       || (p.title||"").toLowerCase().includes(q)
       || (p.outcome||"").toLowerCase().includes(q)
       || (p.slug||"").toLowerCase().includes(q));
+  }
+  function basePositions(){
+    let rows = searchPositions();
     const wantSingle = catFilter.has("single"), wantCombo = catFilter.has("combo");
     if(wantSingle || wantCombo) rows = rows.filter(p => p.isCombo ? wantCombo : wantSingle);
     return rows;
@@ -1523,11 +1533,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       [...catFilter].sort().join(","), [...posStatusFilter].sort().join(",")].join("|");
     if(key === posRenderKey) return;
     posRenderKey = key;
-    // live counts on the status chips, from the set before status filtering
+    // faceted chip counts: each family counts against the OTHER family's selection
+    // (status counts respect Single/Combo; Single/Combo counts respect status)
     const counts = {open:0, won:0, loss:0, redeemable:0};
     basePositions().forEach(p => counts[posStatus(p)]++);
     document.querySelectorAll(".fchip[data-pstat] .cnt").forEach(el =>
       el.textContent = (counts[el.parentElement.dataset.pstat] || 0).toLocaleString());
+    const searchRows = searchPositions();
+    const statusApplied = posStatusFilter.size
+      ? searchRows.filter(p => posStatusFilter.has(posStatus(p))) : searchRows;
+    const catCounts = {single:0, combo:0};
+    statusApplied.forEach(p => catCounts[p.isCombo ? "combo" : "single"]++);
+    document.querySelectorAll('.fchip[data-cat="single"] .cnt, .fchip[data-cat="combo"] .cnt').forEach(el =>
+      el.textContent = (catCounts[el.parentElement.dataset.cat] || 0).toLocaleString());
     const rows = visiblePositions();
     let note;
     if(posLoading) note = "Loading positions…";
@@ -1549,6 +1567,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
     $("posNote").textContent = note;
     $("posBody").innerHTML = rows.slice(0, POS_VIEW_CAP).map(posRowHtml).join("");
+    // grab-cursor affordance when the positions table overflows sideways
+    $("posWrap").classList.toggle("grabbable", $("posWrap").scrollWidth > $("posWrap").clientWidth);
   }
   function positionsCsv(rows){
     const cols = ["proxyWallet","title","outcome","size","avgPrice","curPrice","initialValue","currentValue","cashPnl","percentPnl","realizedPnl","redeemable","endDate","conditionId"];
@@ -2055,13 +2075,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       document.body.style.cursor = "col-resize";
     });
   });
-  // ---------- drag anywhere in the table to scroll it sideways ----------
+  // ---------- drag anywhere in a table to scroll it sideways ----------
   // A press only becomes a pan after a small movement threshold, so plain
   // clicks (sort headers, type-badge market filter, links) still work; after
   // a real drag the trailing click is swallowed so it can't trigger them.
   // Touch devices pan the overflow natively, so this is mouse-only.
-  (function(){
-    const wrap = $("tableWrap");
+  function enablePan(wrap){
     const THRESHOLD = 6; // px of movement before a press becomes a pan
     let downX = 0, startL = 0, panning = false, pid = null;
     function move(e){
@@ -2102,7 +2121,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       wrap.addEventListener("pointerup", up);
       wrap.addEventListener("pointercancel", up);
     });
-  })();
+  }
+  enablePan($("tableWrap"));
+  enablePan($("posWrap"));
 
   // one download button whose format follows the active tab
   window.__pmacDebug = {fetchTransfersViaLogs}; // console access for diagnostics
