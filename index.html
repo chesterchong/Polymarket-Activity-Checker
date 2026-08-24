@@ -208,6 +208,12 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 td.pos{color:var(--success);}
 td.neg{color:var(--destructive);}
 .pnl-pct{opacity:.7; font-size:11px;}
+/* live price update flashes */
+@keyframes pxUp{from{background:rgba(34,197,94,.28);}to{background:transparent;}}
+@keyframes pxDown{from{background:rgba(239,68,68,.28);}to{background:transparent;}}
+td.px-up{animation:pxUp 1s ease-out;}
+td.px-down{animation:pxDown 1s ease-out;}
+@media (prefers-reduced-motion: reduce){ td.px-up, td.px-down{animation:none;} }
 .table-wrap.grabbable{cursor:grab;} /* interactive cells (headers, badges, links) override with their own cursor */
 .table-wrap.grab-panning{cursor:grabbing; user-select:none;}
 .table-wrap.grab-panning *{cursor:grabbing !important;}
@@ -1328,6 +1334,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // no auto-retry after a failure (posError) — progressive feed chunks re-dispatch
     // here and would otherwise hammer a failing endpoint in a loop
     if(!posLoaded && !posLoading && !posError && currentWallets.length) loadPositions();
+    else pollLivePrices(); // returning to the tab refreshes prices immediately
   }
 
   // ---------- drag-to-scroll affordance ----------
@@ -1468,6 +1475,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(ok.length) posLoaded = true;
     else if(posFailedWallets.length) posError = results.find(r => !r.ok).err;
     renderPositions();
+    pollLivePrices(); // first live tick right away instead of waiting the interval
   }
   // positions honor the search box, the Single/Combo chips, and the status chips.
   // basePositions is the set BEFORE status filtering — the chip counts read it.
@@ -1554,6 +1562,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     document.querySelectorAll('.fchip[data-cat="single"] .cnt, .fchip[data-cat="combo"] .cnt').forEach(el =>
       el.textContent = (catCounts[el.parentElement.dataset.cat] || 0).toLocaleString());
     const rows = visiblePositions();
+    $("posNote").textContent = buildPosNote(rows, q);
+    posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
+    hideTooltip(); // rows are being replaced under any open tooltip
+    $("posBody").innerHTML = posRendered.map((p, i) => posRowHtml(p, i)).join("");
+    // grab-cursor affordance when the positions table overflows sideways
+    $("posWrap").classList.toggle("grabbable", $("posWrap").scrollWidth > $("posWrap").clientWidth);
+  }
+  function buildPosNote(rows, q){
     let note;
     if(posLoading) note = "Loading positions…";
     else if(posError) note = "Could not load positions — " + posError + ". Run the search again to retry.";
@@ -1572,13 +1588,79 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     }
     if(posLoaded && posFailedWallets.length)
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
-    $("posNote").textContent = note;
-    posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
-    hideTooltip(); // rows are being replaced under any open tooltip
-    $("posBody").innerHTML = posRendered.map((p, i) => posRowHtml(p, i)).join("");
-    // grab-cursor affordance when the positions table overflows sideways
-    $("posWrap").classList.toggle("grabbable", $("posWrap").scrollWidth > $("posWrap").clientWidth);
+    return note;
   }
+
+  // ---------- live prices for open single positions (CLOB midpoints, every 10s) ----------
+  // One batched POST per tick, only while the positions view is visible in a
+  // focused tab. Prices patch the data model, then only the affected cells and
+  // the totals line update in place — no full re-render, no re-sort jumping.
+  const LIVE_MS = 10000, LIVE_MAX_TOKENS = 600, LIVE_CHUNK = 300;
+  let liveBusy = false, liveActive = false;
+  async function pollLivePrices(){
+    if(liveBusy || posLoading || !posLoaded || document.hidden) return;
+    if(!$("posWrap").classList.contains("active")) return;
+    const targets = allPositions.filter(p => !p.isCombo && p.asset && posStatus(p) === "open");
+    if(!targets.length) return;
+    const tokens = [...new Set(targets.map(p => String(p.asset)))].slice(0, LIVE_MAX_TOKENS);
+    const myRun = posRunSeq;
+    liveBusy = true;
+    try{
+      const chunks = [];
+      for(let i = 0; i < tokens.length; i += LIVE_CHUNK) chunks.push(tokens.slice(i, i + LIVE_CHUNK));
+      const parts = await Promise.all(chunks.map(c =>
+        fetch("https://clob.polymarket.com/midpoints", {
+          method: "POST", headers: {"content-type": "application/json"},
+          body: JSON.stringify(c.map(t => ({token_id: t}))),
+          signal: AbortSignal.timeout(8000)
+        }).then(r => r.ok ? r.json() : {})));
+      if(myRun !== posRunSeq) return; // a new search landed while we were fetching
+      const prices = Object.assign({}, ...parts);
+      const changed = new Map(); // position -> flash direction class
+      for(const p of targets){
+        const px = Number(prices[String(p.asset)]);
+        if(!isFinite(px) || px <= 0) continue; // resolved/bookless tokens keep their last price
+        const old = Number(p.curPrice) || 0;
+        if(Math.abs(px - old) < 0.0005) continue;
+        const oldVal = Number(p.currentValue) || 0;
+        p.curPrice = px;
+        p.currentValue = (Number(p.size) || 0) * px;
+        p.cashPnl = (Number(p.cashPnl) || 0) + (p.currentValue - oldVal);
+        if(Number(p.initialValue)) p.percentPnl = p.cashPnl / Number(p.initialValue) * 100;
+        changed.set(p, px > old ? "px-up" : "px-down");
+      }
+      liveActive = true;
+      applyLivePrices(changed);
+    }catch(e){ /* transient — next tick retries */ }
+    finally{ liveBusy = false; }
+  }
+  function applyLivePrices(changed){
+    const body = $("posBody");
+    // original column indices: 5 = Cur price, 6 = Value, 7 = PnL
+    const curPos = posCols.order.indexOf(5), valPos = posCols.order.indexOf(6), pnlPos = posCols.order.indexOf(7);
+    posRendered.forEach((p, i) => {
+      if(!changed.has(p)) return;
+      const row = body.children[i];
+      if(!row) return;
+      const dir = changed.get(p);
+      const flash = td => { td.classList.remove("px-up","px-down"); void td.offsetWidth; td.classList.add(dir); };
+      const cur = row.cells[curPos], val = row.cells[valPos], pnlTd = row.cells[pnlPos];
+      if(cur){ cur.textContent = Number(p.curPrice).toFixed(3); flash(cur); }
+      if(val){ val.textContent = "$" + fmtUsd(p.currentValue); flash(val); }
+      if(pnlTd){
+        const pnl = Number(p.cashPnl) || 0, pct = Number(p.percentPnl);
+        pnlTd.classList.toggle("pos", pnl >= 0);
+        pnlTd.classList.toggle("neg", pnl < 0);
+        pnlTd.innerHTML = (pnl < 0 ? "-$" : "$") + fmtUsd(Math.abs(pnl))
+          + (isFinite(pct) ? ' <span class="pnl-pct">(' + (pct >= 0 ? "+" : "") + pct.toFixed(1) + '%)</span>' : "");
+        flash(pnlTd);
+      }
+    });
+    $("posNote").textContent = buildPosNote(visiblePositions(), $("searchBox").value.trim())
+      + (liveActive ? " · ⦿ live" : "");
+  }
+  setInterval(pollLivePrices, LIVE_MS);
+
   function positionsCsv(rows){
     const cols = ["proxyWallet","title","outcome","size","avgPrice","curPrice","initialValue","currentValue","cashPnl","percentPnl","realizedPnl","redeemable","endDate","conditionId"];
     // csvCell carries the spreadsheet formula-injection guard used by the activity CSV
@@ -2167,7 +2249,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   enablePan($("posWrap"));
 
   // one download button whose format follows the active tab
-  window.__pmacDebug = {fetchTransfersViaLogs}; // console access for diagnostics
+  window.__pmacDebug = {fetchTransfersViaLogs, pollLivePrices}; // console access for diagnostics
 
   $("dlBtn").addEventListener("click", ()=>{
     if($("tabJson").classList.contains("on"))
