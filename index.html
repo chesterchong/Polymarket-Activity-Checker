@@ -447,6 +447,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <div class="stat" title="Sum of trade sizes in view (Polymarket trading volume — excludes deposits, withdrawals, rewards, redemptions, and rebates)"><div class="label">Volume (USDC)</div><div class="value" id="stVolume">–</div></div>
         <div class="stat" title="Profit and loss over the selected time range (from Polymarket's PnL API) — unaffected by the client-side filters below"><div class="label">PnL <span id="pnlWindow"></span></div><div class="value" id="stPnl">–</div></div>
         <div class="stat" title="Current value of open positions (from Polymarket's value API) — unaffected by the filters below"><div class="label">Portfolio value</div><div class="value" id="stPortfolio">–</div></div>
+        <div class="stat" title="Cash in the wallet (USDC + PUSD read on-chain) — funds not currently in positions"><div class="label">Wallet balance</div><div class="value" id="stBalance">–</div></div>
       </div>
       <div class="sum-grid">
         <div class="stat"><div class="label">Records</div><div class="value" id="stRecords">–</div></div>
@@ -1042,6 +1043,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posRunSeq++; allPositions = []; posLoaded = false; posLoading = false;
     posError = null; posTruncated = false; posFailedWallets = []; posRenderKey = null;
     if($("tabPositions").classList.contains("on")) loadPositions();
+    lastBalance = null; $("stBalance").textContent = "–";
+    pollBalance(); // wallet cash shows immediately rather than on the next interval
     const notes = [];
 
     try{
@@ -1711,6 +1714,40 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
   }
   setInterval(pollLivePrices, LIVE_MS);
+
+  // ---------- live wallet cash balance (on-chain balanceOf via public RPC) ----------
+  // USDC.e + native USDC + PUSD (all 6 decimals) summed across the searched
+  // wallets — one batched eth_call POST per tick, on every view, paused when hidden
+  let balBusy = false, lastBalance = null;
+  async function pollBalance(){
+    if(balBusy || document.hidden || !currentWallets.length) return;
+    const myRun = posRunSeq; // run() bumps this — discard results for a stale search
+    const calls = [];
+    currentWallets.forEach(a => USDC_TOKENS.forEach(t =>
+      calls.push({jsonrpc:"2.0", id: calls.length + 1, method:"eth_call",
+        params:[{to:t, data:"0x70a08231" + pad32(a).slice(2)}, "latest"]})));
+    balBusy = true;
+    try{
+      const res = await fetch("https://polygon-bor-rpc.publicnode.com", {
+        method:"POST", headers:{"content-type":"application/json"},
+        body: JSON.stringify(calls), signal: AbortSignal.timeout(8000)});
+      if(!res.ok) return;
+      const j = await res.json();
+      if(myRun !== posRunSeq || !Array.isArray(j)) return;
+      let total = 0;
+      for(const r of j){
+        const v = parseInt((r && r.result) || "0x0", 16);
+        if(isFinite(v)) total += v / 1e6;
+      }
+      const el = $("stBalance");
+      if(lastBalance === null) el.textContent = "$" + fmtUsd(total);
+      else if(Math.abs(total - lastBalance) >= 0.005)
+        tweenCell(el, lastBalance, total, v => "$" + fmtUsd(v), total > lastBalance ? "px-up" : "px-down");
+      lastBalance = total;
+    }catch(e){ /* transient — next tick retries */ }
+    finally{ balBusy = false; }
+  }
+  setInterval(pollBalance, LIVE_MS);
 
   function positionsCsv(rows){
     const cols = ["proxyWallet","title","outcome","size","avgPrice","curPrice","initialValue","currentValue","cashPnl","percentPnl","realizedPnl","redeemable","endDate","conditionId"];
