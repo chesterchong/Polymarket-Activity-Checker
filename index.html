@@ -33,6 +33,18 @@
   --json-key:#7aa5ff; --json-str:#4ade80; --json-num:#fbbf24; --json-bool:#c4b5fd; --json-null:#8b8d96;
 }
 *{box-sizing:border-box; margin:0; padding:0;}
+
+/* slim, theme-aware scrollbars */
+*{scrollbar-width:thin; scrollbar-color:var(--border) transparent;} /* Firefox */
+::-webkit-scrollbar{width:10px; height:10px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{
+  background:var(--border); border-radius:999px;
+  border:3px solid transparent; background-clip:padding-box; /* floating 4px pill */
+  min-width:40px; min-height:40px;
+}
+::-webkit-scrollbar-thumb:hover{background:var(--muted-foreground); border:3px solid transparent; background-clip:padding-box;}
+::-webkit-scrollbar-corner{background:transparent;}
 html,body{height:100%;}
 body{
   font-family:'Geist',ui-sans-serif,system-ui,sans-serif;
