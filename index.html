@@ -468,8 +468,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         </div>
         <div class="fchips pos-only" role="group" aria-label="Position status">
           <button type="button" class="fchip" data-pstat="open" title="Markets not yet resolved">Open</button>
-          <button type="button" class="fchip" data-pstat="won" title="Resolved in this wallet's favor">Won</button>
-          <button type="button" class="fchip" data-pstat="loss" title="Resolved against this wallet">Loss</button>
           <button type="button" class="fchip" data-pstat="redeemable" title="Resolved and awaiting redemption">Redeemable</button>
         </div>
         <span class="date-range" title="Show records between these dates">
@@ -1431,7 +1429,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(myRun !== posRunSeq) return;
     posLoading = false;
     const ok = results.filter(r => r.ok);
-    allPositions = ok.flatMap(r => r.rows);
+    // worthless holdings (resolved losses at $0) are not active positions — drop
+    // them at the source so the table, totals, and the CSV export all agree
+    allPositions = ok.flatMap(r => r.rows).filter(p => (Number(p.currentValue) || 0) > 0);
     posTruncated = ok.some(r => r.truncated);
     posFailedWallets = results.filter(r => !r.ok).map(r => r.addr);
     if(ok.length) posLoaded = true;
