@@ -297,6 +297,16 @@ footer a{color:inherit;}
 
 /* results bar extras */
 input[type="date"]{height:30px; border:1px solid var(--border); background:var(--card); color:var(--foreground); font-family:inherit; font-size:12px; padding:0 8px; color-scheme:light dark;}
+/* multi-select category chips ("Funding only" is a preset for deposit+withdrawal) */
+.fchips{display:inline-flex; align-items:center; gap:6px;}
+.fchip{
+  height:32px; border:1px solid var(--border); border-radius:999px; background:var(--background);
+  color:var(--muted-foreground); font-size:12px; padding:0 14px; cursor:pointer; font-family:inherit;
+}
+.fchip:hover{color:var(--foreground);}
+.fchip.on{background:var(--primary); border-color:var(--primary); color:var(--primary-foreground);}
+.fchip:focus-visible{outline:2px solid var(--primary); outline-offset:1px;}
+.fchip-sep{width:1px; height:18px; background:var(--border); margin:0 4px; flex-shrink:0;}
 .chips{display:inline-flex; gap:6px;}
 .chip{height:32px; border:1px dashed var(--primary); color:var(--primary); background:transparent; font-size:12px; padding:0 14px; cursor:pointer; font-family:inherit; border-radius:999px;}
 .chip:hover{background:rgba(22,93,252,.08);}
@@ -406,9 +416,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     <div class="results-bar" id="resultsBar">
       <div class="rb-row">
         <div class="tabs" role="tablist">
-          <button class="tab on" id="tabTable" role="tab">Table</button>
+          <button class="tab on" id="tabTable" role="tab">Activity</button>
           <button class="tab" id="tabPositions" role="tab">Positions</button>
-          <button class="tab" id="tabJson" role="tab">JSON</button>
+          <button class="tab" id="tabJson" role="tab">Json</button>
         </div>
         <span class="flex-spacer"></span>
         <span class="search-wrap">
@@ -438,10 +448,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <option value="BUY">Buy</option>
           <option value="SELL">Sell</option>
         </select>
-        <div class="seg" id="comboSeg" role="group" aria-label="Prediction type">
-          <button type="button" class="seg-btn on" data-v="">All</button>
-          <button type="button" class="seg-btn" data-v="single">Single</button>
-          <button type="button" class="seg-btn" data-v="combo">Combo</button>
+        <div class="fchips" role="group" aria-label="Category filter">
+          <button type="button" class="fchip" id="fundingChip" title="Deposits, withdrawals and user-to-user transfers (tips)">Funding only</button>
+          <span class="fchip-sep" aria-hidden="true"></span>
+          <button type="button" class="fchip" data-cat="single" title="Single-market trades">Single</button>
+          <button type="button" class="fchip" data-cat="combo" title="Combo trades">Combo</button>
+          <button type="button" class="fchip" data-cat="deposit" title="USDC deposits, including transfers received from other users">Deposit</button>
+          <button type="button" class="fchip" data-cat="withdrawal" title="USDC withdrawals, including transfers sent to other users">Withdrawal</button>
+          <button type="button" class="fchip" data-cat="rewards" title="Rewards, yield, rebates and referral payouts">Rewards</button>
         </div>
         <span class="date-range" title="Show records between these dates">
           <span class="dr-label">Date</span>
@@ -455,8 +469,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <option value="100" selected>100 rows</option>
           <option value="200">200 rows</option>
         </select>
-        <button type="button" class="chip" id="dwChip" title="Show only deposits and withdrawals">D/W</button>
-        <button type="button" class="chip" id="openChip" title="Show only trades on markets this wallet has not redeemed yet">Not redeemed</button>
         <span id="chips" class="chips"></span>
         <span class="flex-spacer"></span>
         <button class="btn btn-ghost" id="resetBtn" title="Reset all filters">Reset filters</button>
@@ -558,9 +570,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let fetching = false;
   let sortDir = "desc";   // Time column sort direction
   let marketFilter = null; // {conditionId, eventSlug, slug, title} set by clicking a row's type badge
-  let comboMode = "";     // "" | "single" | "combo"
-  let dwOnly = false;     // D/W chip: show only deposits/withdrawals
-  let openOnly = false;   // Not-redeemed chip: trades on markets the wallet hasn't redeemed
+  // category filter chips: multi-select inclusion filter; empty set = show everything.
+  // "Funding only" is a preset for {deposit, withdrawal} — the on-chain D/W records
+  // already include user-to-user transfers (tips), so those are covered too.
+  let catFilter = new Set(); // of "single" | "combo" | "deposit" | "withdrawal" | "rewards"
+  const FUNDING_CATS = ["deposit","withdrawal"];
+  const REWARD_TYPES = new Set(["REWARD","YIELD","TAKER_REBATE","MAKER_REBATE","REFERRAL_REWARD"]);
+  function recCategory(r){
+    if(r.type === "DEPOSIT") return "deposit";
+    if(r.type === "WITHDRAWAL") return "withdrawal";
+    if(REWARD_TYPES.has(r.type)) return "rewards";
+    if(r.type === "TRADE") return r.isCombo === true ? "combo" : "single";
+    return null; // SPLIT / MERGE / REDEEM / CONVERSION fall outside the chip categories
+  }
   // time-range pills: seconds back from now, "" = all time. Defaults to 30d —
   // covers the typical "recent activity" check and keeps the on-chain scan quick;
   // the last choice is remembered per browser.
@@ -1094,21 +1116,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const q = $("searchBox").value.trim().toLowerCase();
     const from = dateBound("dateFrom", false), to = dateBound("dateTo", true);
     const tSel = $("typeSel").value, sSel = $("sideSel").value;
-    // markets this wallet has already redeemed, keyed per wallet
-    let redeemed = null;
-    if(openOnly){
-      redeemed = new Set(allRecords
-        .filter(r => r.type === "REDEEM" && r.conditionId)
-        .map(r => (r.proxyWallet||"").toLowerCase() + "|" + r.conditionId.toLowerCase()));
-    }
     filteredRecords = allRecords.filter(r => {
-      if(openOnly){
-        if(r.type !== "TRADE" || !r.conditionId) return false;
-        if(redeemed.has((r.proxyWallet||"").toLowerCase() + "|" + r.conditionId.toLowerCase())) return false;
+      if(catFilter.size){
+        const c = recCategory(r);
+        if(!c || !catFilter.has(c)) return false;
       }
-      if(dwOnly && r.type !== "DEPOSIT" && r.type !== "WITHDRAWAL") return false;
-      if(comboMode === "combo" && r.isCombo !== true) return false;
-      if(comboMode === "single" && r.isCombo === true) return false;
       if(tSel && (r.type||"") !== tSel) return false;
       if(sSel && (r.side||"") !== sSel) return false;
       if(marketFilter){
@@ -1642,14 +1654,30 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     searchTimer = setTimeout(()=>{ refreshResults(); renderPositions(); }, 200);
   });
 
-  // segmented single/combo filter (also driven by clicking a COMBO badge)
-  function setComboMode(v){
-    comboMode = v;
-    document.querySelectorAll("#comboSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  // category filter chips (the COMBO badge in rows also drives the combo chip)
+  function fundingActive(){
+    return catFilter.size === FUNDING_CATS.length && FUNDING_CATS.every(c => catFilter.has(c));
+  }
+  function updateFchips(){
+    document.querySelectorAll(".fchip[data-cat]").forEach(b => b.classList.toggle("on", catFilter.has(b.dataset.cat)));
+    $("fundingChip").classList.toggle("on", fundingActive());
+  }
+  function setCatFilter(next){
+    catFilter = next;
+    updateFchips();
     refreshResults();
   }
-  document.querySelectorAll("#comboSeg .seg-btn").forEach(b =>
-    b.addEventListener("click", () => setComboMode(b.dataset.v)));
+  document.querySelectorAll(".fchip[data-cat]").forEach(b =>
+    b.addEventListener("click", ()=>{
+      const next = new Set(catFilter);
+      if(next.has(b.dataset.cat)) next.delete(b.dataset.cat); else next.add(b.dataset.cat);
+      setCatFilter(next);
+    }));
+  // "Funding only": ticks deposits + withdrawals (which include user-to-user
+  // transfers/tips — they arrive as on-chain USDC transfer records); click again to clear
+  $("fundingChip").addEventListener("click", ()=>{
+    setCatFilter(fundingActive() ? new Set() : new Set(FUNDING_CATS));
+  });
 
   // date range + rows-per-page + Time sort
   $("dateFrom").addEventListener("change", refreshResults);
@@ -1661,20 +1689,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   $("thTime").addEventListener("click", ()=>{
     sortDir = sortDir === "desc" ? "asc" : "desc";
     $("sortArrow").textContent = sortDir === "desc" ? "▼" : "▲";
-    refreshResults();
-  });
-
-  // D/W quick-filter chip: deposits & withdrawals only
-  $("dwChip").addEventListener("click", ()=>{
-    dwOnly = !dwOnly;
-    $("dwChip").classList.toggle("on", dwOnly);
-    refreshResults();
-  });
-
-  // Not-redeemed chip: trades on markets with no matching REDEEM for that wallet
-  $("openChip").addEventListener("click", ()=>{
-    openOnly = !openOnly;
-    $("openChip").classList.toggle("on", openOnly);
     refreshResults();
   });
 
@@ -1793,7 +1807,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(cp){ copyText(cp.dataset.tx, cp); return; }
     const bb = e.target.closest(".badge-btn");
     if(!bb) return;
-    if(bb.dataset.fc){ setComboMode(comboMode === "combo" ? "" : "combo"); }
+    if(bb.dataset.fc){ setCatFilter(catFilter.has("combo") && catFilter.size === 1 ? new Set() : new Set(["combo"])); }
     else if(bb.dataset.ft){
       // pivot to this row's market event: show all its activity, any type
       const cell = bb.closest("tr")?.querySelector(".market-cell");
@@ -1936,10 +1950,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("searchBox").value = "";
     $("rowsSel").value = "100"; pageSize = 100;
     marketFilter = null; renderChips();
-    dwOnly = false; $("dwChip").classList.remove("on");
-    openOnly = false; $("openChip").classList.remove("on");
-    comboMode = "";
-    document.querySelectorAll("#comboSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === ""));
+    catFilter = new Set();
+    updateFchips();
     refreshResults();
     renderPositions(); // clearing searchBox programmatically fires no input event
   });
