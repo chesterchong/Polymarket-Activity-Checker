@@ -151,6 +151,14 @@ input[type="search"]{
 
 .table-wrap{display:none; border:1px solid var(--border); overflow-x:auto;}
 .table-wrap.active{display:block;}
+/* positions view: its own table — the Columns sidebar only governs the activity
+   table, so hide it while positions are shown */
+.table-area:has(.pos-wrap.active) .side-bar{display:none;}
+.pos-note{padding:10px 14px; font-size:12px; color:var(--muted-foreground); border-bottom:1px solid var(--border);}
+.pos-note:empty{display:none;}
+td.pos{color:var(--success);}
+td.neg{color:var(--destructive);}
+.pnl-pct{opacity:.7; font-size:11px;}
 .table-wrap.grabbable{cursor:grab;} /* interactive cells (headers, badges, links) override with their own cursor */
 .table-wrap.grab-panning{cursor:grabbing; user-select:none;}
 .table-wrap.grab-panning *{cursor:grabbing !important;}
@@ -371,6 +379,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <div class="rb-left">
         <div class="tabs" role="tablist">
           <button class="tab on" id="tabTable" role="tab">Table</button>
+          <button class="tab" id="tabPositions" role="tab">Positions</button>
           <button class="tab" id="tabJson" role="tab">JSON</button>
         </div>
         <select id="typeSel" aria-label="Activity type">
@@ -449,6 +458,18 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     <div class="json-wrap" id="jsonWrap">
       <div class="json-note" id="jsonNote"></div>
       <pre id="jsonPre"></pre>
+    </div>
+
+    <div class="table-wrap pos-wrap" id="posWrap">
+      <div class="pos-note" id="posNote"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th>
+          </tr>
+        </thead>
+        <tbody id="posBody"></tbody>
+      </table>
     </div>
     </div><!-- /.table-main -->
 
@@ -873,10 +894,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     fetching = true;
     $("submitBtn").disabled = true;
     $("progressBox").classList.add("active");
-    ["summaryBox","resultsBar","tableWrap","jsonWrap","emptyBox","walletsBox"].forEach(id=>$(id).classList.remove("active"));
+    ["summaryBox","resultsBar","tableWrap","jsonWrap","posWrap","emptyBox","walletsBox"].forEach(id=>$(id).classList.remove("active"));
     allRecords = []; pagesFetched = 0;
     currentWallets = valid.slice();
     renderWalletTags();
+    // positions belong to the previous search — invalidate (and stale-guard any
+    // in-flight fetch); if the Positions tab is selected reload right away, others
+    // load lazily on first visit. Check the tab, not the wrap: the reset loop
+    // above already stripped the wrap's active class.
+    posRunSeq++; allPositions = []; posLoaded = false; posLoading = false;
+    posError = null; posTruncated = false; posFailedWallets = []; posRenderKey = null;
+    if($("tabPositions").classList.contains("on")) loadPositions();
     const notes = [];
 
     try{
@@ -1003,13 +1031,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     loadFeesFor(filteredRecords); // async; resolves the Fees (est.) total
 
     if(!allRecords.length){
-      $("emptyBox").classList.add("active");
       $("summaryBox").classList.add("active");
+      // positions are independent of the feed — keep the tabs reachable and the
+      // positions view alive even when the feed came back empty
+      $("resultsBar").classList.add("active");
+      if($("tabPositions").classList.contains("on")) showPositions();
+      else $("emptyBox").classList.add("active");
       return;
     }
     $("summaryBox").classList.add("active");
     $("resultsBar").classList.add("active");
-    showTable();
+    // keep whichever view the user is on; default to the table
+    if($("tabJson").classList.contains("on")) showJson();
+    else if($("tabPositions").classList.contains("on")) showPositions();
+    else showTable();
   }
 
   function dateBound(id, endOfDay){
@@ -1164,13 +1199,23 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("loadMoreBtn").textContent = "Show more (" + (filteredRecords.length-renderedCount).toLocaleString() + " remaining)";
   }
 
+  function setView(tab, wrap){
+    ["tabTable","tabPositions","tabJson"].forEach(id => $(id).classList.toggle("on", id === tab));
+    ["tableWrap","posWrap","jsonWrap"].forEach(id => $(id).classList.toggle("active", id === wrap));
+  }
   function showTable(){
-    $("tabTable").classList.add("on"); $("tabJson").classList.remove("on");
-    $("jsonWrap").classList.remove("active");
-    $("tableWrap").classList.add("active");
+    setView("tabTable", "tableWrap");
     $("dlBtn").textContent = "Download CSV";
     renderTableChunk(true);
     updateGrabAffordance();
+  }
+  function showPositions(){
+    setView("tabPositions", "posWrap");
+    $("dlBtn").textContent = "Download CSV";
+    renderPositions();
+    // no auto-retry after a failure (posError) — progressive feed chunks re-dispatch
+    // here and would otherwise hammer a failing endpoint in a loop
+    if(!posLoaded && !posLoading && !posError && currentWallets.length) loadPositions();
   }
 
   // ---------- drag-to-scroll affordance ----------
@@ -1212,6 +1257,109 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // now but lets it reappear on a later search, since they may not have seen it
   $("tableWrap").addEventListener("scroll", ()=>dismissDragHint(false), {passive:true});
 
+  // ---------- positions tab (data-api /positions — independent of the activity feed) ----------
+  let allPositions = [], posLoaded = false, posLoading = false, posRunSeq = 0;
+  let posError = null, posTruncated = false, posFailedWallets = [], posRenderKey = null;
+  const POS_MAX_PAGES = 4;   // 4 × 500 = 2,000 positions per wallet, surfaced in the note when hit
+  const POS_VIEW_CAP = 1000; // DOM safety, like JSON_VIEW_CAP — the CSV still exports everything
+  async function loadPositions(){
+    const myRun = ++posRunSeq; // a newer run() or reload invalidates this fetch
+    posLoading = true; posLoaded = false; posError = null; posTruncated = false;
+    posFailedWallets = []; allPositions = [];
+    renderPositions();
+    // per-wallet errors keep the other wallets' positions instead of failing the lot
+    const results = await Promise.all(currentWallets.map(async addr => {
+      try{
+        const out = [];
+        let truncated = false;
+        for(let page=0; page<POS_MAX_PAGES; page++){
+          const qs = new URLSearchParams({user:addr, limit:"500", offset:String(page*500), sizeThreshold:"1"});
+          const res = await fetchWithRetry("https://data-api.polymarket.com/positions?" + qs.toString(), 3, 15000);
+          if(!res.ok) throw new Error("HTTP " + res.status);
+          const rows = await res.json();
+          if(!Array.isArray(rows)) break;
+          out.push(...rows);
+          if(rows.length < 500) break;
+          if(page === POS_MAX_PAGES - 1) truncated = true;
+        }
+        return {ok:true, rows:out, truncated};
+      }catch(e){
+        return {ok:false, addr, err:e.message};
+      }
+    }));
+    if(myRun !== posRunSeq) return;
+    posLoading = false;
+    const ok = results.filter(r => r.ok);
+    allPositions = ok.flatMap(r => r.rows);
+    posTruncated = ok.some(r => r.truncated);
+    posFailedWallets = results.filter(r => !r.ok).map(r => r.addr);
+    if(ok.length) posLoaded = true;
+    else if(posFailedWallets.length) posError = results.find(r => !r.ok).err;
+    renderPositions();
+  }
+  // the results-bar search filters positions too; other filters are feed-only
+  function visiblePositions(){
+    const q = $("searchBox").value.trim().toLowerCase();
+    const rows = allPositions.filter(p => !q
+      || (p.title||"").toLowerCase().includes(q)
+      || (p.outcome||"").toLowerCase().includes(q)
+      || (p.slug||"").toLowerCase().includes(q));
+    rows.sort((a,b)=>(Number(b.currentValue)||0)-(Number(a.currentValue)||0));
+    return rows;
+  }
+  function posRowHtml(p){
+    const pnl = Number(p.cashPnl)||0;
+    const pct = Number(p.percentPnl);
+    const mkt = '<div class="market-cell">' + (p.icon ? '<img src="'+esc(p.icon)+'" alt="" loading="lazy">' : "")
+      + '<a href="https://polymarket.com/event/'+esc(p.eventSlug||p.slug||"")+'" target="_blank" rel="noopener">'+esc(p.title||"—")+'</a></div>';
+    return "<tr>"
+      + '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(p.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(p.proxyWallet))+"</a></td>"
+      + "<td>"+mkt+"</td>"
+      + '<td class="outcome">'+esc(p.outcome||"")+(p.redeemable ? ' <span class="badge buy">REDEEMABLE</span>' : "")+"</td>"
+      + '<td class="num mono">'+fmtNum(p.size)+"</td>"
+      + '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "")+"</td>"
+      + '<td class="num mono">'+(p.curPrice!=null ? Number(p.curPrice).toFixed(3) : "")+"</td>"
+      + '<td class="num mono">$'+fmtUsd(p.currentValue)+"</td>"
+      + '<td class="num mono '+(pnl >= 0 ? "pos" : "neg")+'">'+(pnl < 0 ? "-$" : "$")+fmtUsd(Math.abs(pnl))
+        + (isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>"
+      + '<td class="mono">'+esc(p.endDate||"")+"</td>"
+      + "</tr>";
+  }
+  function renderPositions(){
+    if(!$("posWrap").classList.contains("active")) return;
+    const q = $("searchBox").value.trim();
+    // progressive feed chunks re-dispatch here constantly — skip identical re-renders
+    const key = [posRunSeq, posLoading, posLoaded, posError, allPositions.length, q.toLowerCase()].join("|");
+    if(key === posRenderKey) return;
+    posRenderKey = key;
+    const rows = visiblePositions();
+    let note;
+    if(posLoading) note = "Loading positions…";
+    else if(posError) note = "Could not load positions — " + posError + ". Run the search again to retry.";
+    else if(!posLoaded) note = currentWallets.length ? "" : "Check a wallet first — positions load from the current search.";
+    else if(!rows.length) note = q ? "No positions match the search." : "No open positions.";
+    else{
+      const val = rows.reduce((s,p)=>s+(Number(p.currentValue)||0),0);
+      const pnl = rows.reduce((s,p)=>s+(Number(p.cashPnl)||0),0);
+      const redeem = rows.filter(p=>p.redeemable).length;
+      note = rows.length.toLocaleString() + " position" + (rows.length===1?"":"s")
+        + " · current value $" + fmtUsd(val)
+        + " · PnL " + (pnl < 0 ? "-$" : "$") + fmtUsd(Math.abs(pnl))
+        + (redeem ? " · " + redeem.toLocaleString() + " redeemable" : "");
+      if(posTruncated) note += " · limited to the first " + (POS_MAX_PAGES*500).toLocaleString() + " positions per wallet";
+      if(rows.length > POS_VIEW_CAP) note += " · showing the top " + POS_VIEW_CAP.toLocaleString() + " by value — narrow the search or download the CSV for all";
+    }
+    if(posLoaded && posFailedWallets.length)
+      note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
+    $("posNote").textContent = note;
+    $("posBody").innerHTML = rows.slice(0, POS_VIEW_CAP).map(posRowHtml).join("");
+  }
+  function positionsCsv(rows){
+    const cols = ["proxyWallet","title","outcome","size","avgPrice","curPrice","initialValue","currentValue","cashPnl","percentPnl","realizedPnl","redeemable","endDate","conditionId"];
+    // csvCell carries the spreadsheet formula-injection guard used by the activity CSV
+    return cols.join(",") + "\n" + rows.map(p => cols.map(c => csvCell(p[c])).join(",")).join("\n");
+  }
+
   // pretty JSON with syntax highlighting (capped for DOM safety)
   const JSON_VIEW_CAP = 1000;
   function highlightJson(str){
@@ -1225,8 +1373,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       });
   }
   function showJson(){
-    $("tabJson").classList.add("on"); $("tabTable").classList.remove("on");
-    $("tableWrap").classList.remove("active");
+    setView("tabJson", "jsonWrap");
     $("dlBtn").textContent = "Download JSON";
     const slice = filteredRecords.slice(0, JSON_VIEW_CAP);
     $("jsonNote").textContent = filteredRecords.length > JSON_VIEW_CAP
@@ -1410,6 +1557,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   $("submitBtn").addEventListener("click", run);
   $("addrInput").addEventListener("keydown", e => { if(e.key==="Enter" && (e.metaKey||e.ctrlKey)) run(); });
   $("tabTable").addEventListener("click", showTable);
+  $("tabPositions").addEventListener("click", showPositions);
   $("tabJson").addEventListener("click", showJson);
   $("loadMoreBtn").addEventListener("click", ()=>renderTableChunk(false));
   function refreshResults(){
@@ -1455,7 +1603,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let searchTimer;
   $("searchBox").addEventListener("input", ()=>{
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(refreshResults, 200);
+    searchTimer = setTimeout(()=>{ refreshResults(); renderPositions(); }, 200);
   });
 
   // segmented single/combo filter (also driven by clicking a COMBO badge)
@@ -1514,7 +1662,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // hiddenCols holds original indices; nth-child works on display positions
     colStyle.textContent = [...hiddenCols]
       .map(i => colOrder.indexOf(i) + 1)
-      .map(p => ".table-wrap th:nth-child("+p+"),.table-wrap td:nth-child("+p+"){display:none;}")
+      .map(p => "#tableWrap th:nth-child("+p+"),#tableWrap td:nth-child("+p+"){display:none;}")
       .join("");
     try{ localStorage.setItem("pmac_hidden_cols", JSON.stringify([...hiddenCols])); }catch(e){}
     // dot on the collapsed tab when the view is missing columns
@@ -1735,6 +1883,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   $("dlBtn").addEventListener("click", ()=>{
     if($("tabJson").classList.contains("on"))
       download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2));
+    else if($("tabPositions").classList.contains("on"))
+      download("polymarket-positions.csv","text/csv",positionsCsv(visiblePositions()));
     else
       download("polymarket-activity.csv","text/csv",toCsv(filteredRecords));
   });
@@ -1755,6 +1905,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     comboMode = "";
     document.querySelectorAll("#comboSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === ""));
     refreshResults();
+    renderPositions(); // clearing searchBox programmatically fires no input event
   });
 })();
 </script>
