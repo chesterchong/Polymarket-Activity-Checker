@@ -1401,13 +1401,29 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           }
           return {out, truncated};
         })();
-        const combosP = fetchWithRetry("https://data-api.polymarket.com/v1/positions/combos?user=" + addr, 3, 15000)
-          .then(res => res.ok ? res.json() : {combos:[]})
-          .then(j => (Array.isArray(j.combos) ? j.combos : [])
-            .filter(c => (Number(c.shares_balance) || 0) > 0).map(mapComboPosition))
-          .catch(() => []); // combos are additive — their failure shouldn't sink the wallet
+        // the combos endpoint defaults to 20 rows — paginate it like the singles,
+        // or open combos beyond the first page silently vanish
+        const combosP = (async () => {
+          try{
+            const out = [];
+            let truncated = false;
+            for(let page=0; page<POS_MAX_PAGES; page++){
+              const qs = new URLSearchParams({user:addr, limit:"500", offset:String(page*500)});
+              const res = await fetchWithRetry("https://data-api.polymarket.com/v1/positions/combos?" + qs.toString(), 3, 15000);
+              if(!res.ok) throw new Error("HTTP " + res.status);
+              const j = await res.json();
+              const rows = Array.isArray(j.combos) ? j.combos : [];
+              out.push(...rows);
+              if(rows.length < 500) break;
+              if(page === POS_MAX_PAGES - 1) truncated = true;
+            }
+            return {rows: out.filter(c => (Number(c.shares_balance) || 0) > 0).map(mapComboPosition), truncated};
+          }catch(e){
+            return {rows:[], truncated:false}; // combos are additive — their failure shouldn't sink the wallet
+          }
+        })();
         const [singles, combos] = await Promise.all([singlesP, combosP]);
-        return {ok:true, rows: singles.out.concat(combos), truncated: singles.truncated};
+        return {ok:true, rows: singles.out.concat(combos.rows), truncated: singles.truncated || combos.truncated};
       }catch(e){
         return {ok:false, addr, err:e.message};
       }
