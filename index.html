@@ -421,11 +421,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button class="tab" id="tabJson" role="tab">Json</button>
         </div>
         <span class="flex-spacer"></span>
-        <span class="search-wrap">
-          <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
-        </span>
-        <button class="btn" id="dlBtn">Download CSV</button>
+        <button class="btn" id="dlBtn">Export</button>
+        <select id="rowsSel" aria-label="Rows to display" title="Rows to display">
+          <option value="25">25 rows</option>
+          <option value="50">50 rows</option>
+          <option value="100" selected>100 rows</option>
+          <option value="200">200 rows</option>
+        </select>
       </div>
       <div class="rb-row">
         <select id="typeSel" aria-label="Activity type">
@@ -463,12 +465,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <span class="dr-sep">–</span>
           <input type="date" id="dateTo" aria-label="To date">
         </span>
-        <select id="rowsSel" aria-label="Rows to display" title="Rows to display">
-          <option value="25">25 rows</option>
-          <option value="50">50 rows</option>
-          <option value="100" selected>100 rows</option>
-          <option value="200">200 rows</option>
-        </select>
+        <span class="search-wrap">
+          <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
+        </span>
         <span id="chips" class="chips"></span>
         <span class="flex-spacer"></span>
         <button class="btn btn-ghost" id="resetBtn" title="Reset all filters">Reset filters</button>
@@ -807,16 +807,24 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   const pad32 = a => "0x000000000000000000000000" + a.toLowerCase().slice(2);
 
   async function latestBlockNumber(){
+    // clock-based anchor: block 90,859,324 observed 2026-07-25, ~2.15s Polygon blocks
+    const anchor = 90859324 + Math.floor((Date.now()/1000 - 1784990000) / 2.15);
     try{
-      const res = await fetch(BLOCKSCOUT + "/stats", {signal: AbortSignal.timeout(8000)});
-      if(res.ok){ const n = Number((await res.json()).total_blocks); if(n > 0) return n; }
+      // NOT /stats total_blocks — that undercounts the chain height by ~2x (it is
+      // an instance indexing counter), which silently ballooned the log window to
+      // years of blocks and drew 500s. The main-page blocks feed has the real head.
+      const res = await fetch(BLOCKSCOUT + "/main-page/blocks", {signal: AbortSignal.timeout(8000)});
+      if(res.ok){
+        const j = await res.json();
+        const n = Number(Array.isArray(j) && j[0] && j[0].height);
+        if(n > anchor * 0.9) return n; // sanity: reject anything wildly below the clock estimate
+      }
     }catch(e){}
-    // anchor fallback: block 90,859,324 observed 2026-07-25, ~2.15s Polygon blocks
-    return 90859324 + Math.floor((Date.now()/1000 - 1784990000) / 2.15);
+    return anchor;
   }
   async function getLogs(qs){
-    const res = await fetch("https://polygon.blockscout.com/api?module=logs&action=getLogs&" + qs,
-      {signal: AbortSignal.timeout(25000)});
+    // fetchWithRetry backs off on 429/5xx — Blockscout throws transient 500s
+    const res = await fetchWithRetry("https://polygon.blockscout.com/api?module=logs&action=getLogs&" + qs, 3, 25000);
     if(!res.ok) throw new Error("logs HTTP " + res.status);
     const j = await res.json();
     return Array.isArray(j.result) ? j.result : [];
@@ -829,9 +837,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const w = pad32(addr);
     const base = "fromBlock=" + fromBlock + "&toBlock=latest&topic0=" + TRANSFER_TOPIC
       + "&topic0_1_opr=and&topic0_2_opr=and&topic1_2_opr=and";
-    const mints    = await getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + pad32(ZERO_ADDR) + "&topic2=" + w);
-    const unwraps  = await getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + w + "&topic2=" + pad32(PUSD_ADDR));
-    const relayOut = await getLogs(base + "&address=" + USDC_TOKENS[0] + "&topic1=" + w + "&topic2=" + pad32(RELAY_DEPOSITORY));
+    const [mints, unwraps, relayOut] = await Promise.all([
+      getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + pad32(ZERO_ADDR) + "&topic2=" + w),
+      getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + w + "&topic2=" + pad32(PUSD_ADDR)),
+      getLogs(base + "&address=" + USDC_TOKENS[0] + "&topic1=" + w + "&topic2=" + pad32(RELAY_DEPOSITORY))
+    ]);
     const truncated = [mints, unwraps, relayOut].some(l => l.length >= 1000); // API result cap
     const byTx = new Map();
     const add = (l, kind) => {
@@ -1253,13 +1263,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
   function showTable(){
     setView("tabTable", "tableWrap");
-    $("dlBtn").textContent = "Download CSV";
+    $("dlBtn").title = "Export the current view as CSV";
     renderTableChunk(true);
     updateGrabAffordance();
   }
   function showPositions(){
     setView("tabPositions", "posWrap");
-    $("dlBtn").textContent = "Download CSV";
+    $("dlBtn").title = "Export the current view as CSV";
     renderPositions();
     // no auto-retry after a failure (posError) — progressive feed chunks re-dispatch
     // here and would otherwise hammer a failing endpoint in a loop
@@ -1310,6 +1320,32 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let posError = null, posTruncated = false, posFailedWallets = [], posRenderKey = null;
   const POS_MAX_PAGES = 4;   // 4 × 500 = 2,000 positions per wallet, surfaced in the note when hit
   const POS_VIEW_CAP = 1000; // DOM safety, like JSON_VIEW_CAP — the CSV still exports everything
+  // combo (parlay) positions come from a separate endpoint; map them onto the same
+  // row shape. Price: resolved combos are 0/1 by status; open ones are estimated
+  // from the product of the legs' current prices (the YES side of a parlay).
+  function mapComboPosition(c){
+    const legs = c.legs || [];
+    const st = String(c.status || "");
+    const est = legs.reduce((m,l) => m * (Number(l.leg_current_price) || 0), 1);
+    const cur = /LOSS/.test(st) ? 0 : /WIN/.test(st) ? 1 : (c.side === "NO" ? 1 - est : est);
+    const size = Number(c.shares_balance) || 0;
+    const initial = Number(c.entry_cost_usdc) || 0;
+    const value = size * cur;
+    const pnl = value + (Number(c.realized_payout_usdc) || 0) - initial;
+    return {
+      proxyWallet: c.user_address, asset: c.combo_position_id, conditionId: c.combo_condition_id,
+      size, avgPrice: Number(c.entry_avg_price_usdc) || 0, curPrice: cur,
+      initialValue: initial, currentValue: value,
+      cashPnl: pnl, percentPnl: initial ? pnl / initial * 100 : 0,
+      redeemable: !!c.redeemable, isCombo: true,
+      title: legs.map(l => (l.market && l.market.outcome) || l.leg_outcome_label || "?").join(" + "),
+      outcome: c.side || "",
+      icon: (legs[0] && legs[0].market && legs[0].market.icon_url) || "",
+      slug: legs.map(l => (l.market && l.market.slug) || "").join(" "),
+      eventSlug: "",
+      endDate: legs.reduce((m,l) => { const d = (l.market && l.market.end_date) || ""; return d > m ? d : m; }, "")
+    };
+  }
   async function loadPositions(){
     const myRun = ++posRunSeq; // a newer run() or reload invalidates this fetch
     posLoading = true; posLoaded = false; posError = null; posTruncated = false;
@@ -1318,19 +1354,28 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // per-wallet errors keep the other wallets' positions instead of failing the lot
     const results = await Promise.all(currentWallets.map(async addr => {
       try{
-        const out = [];
-        let truncated = false;
-        for(let page=0; page<POS_MAX_PAGES; page++){
-          const qs = new URLSearchParams({user:addr, limit:"500", offset:String(page*500), sizeThreshold:"1"});
-          const res = await fetchWithRetry("https://data-api.polymarket.com/positions?" + qs.toString(), 3, 15000);
-          if(!res.ok) throw new Error("HTTP " + res.status);
-          const rows = await res.json();
-          if(!Array.isArray(rows)) break;
-          out.push(...rows);
-          if(rows.length < 500) break;
-          if(page === POS_MAX_PAGES - 1) truncated = true;
-        }
-        return {ok:true, rows:out, truncated};
+        const singlesP = (async () => {
+          const out = [];
+          let truncated = false;
+          for(let page=0; page<POS_MAX_PAGES; page++){
+            const qs = new URLSearchParams({user:addr, limit:"500", offset:String(page*500), sizeThreshold:"1"});
+            const res = await fetchWithRetry("https://data-api.polymarket.com/positions?" + qs.toString(), 3, 15000);
+            if(!res.ok) throw new Error("HTTP " + res.status);
+            const rows = await res.json();
+            if(!Array.isArray(rows)) break;
+            out.push(...rows);
+            if(rows.length < 500) break;
+            if(page === POS_MAX_PAGES - 1) truncated = true;
+          }
+          return {out, truncated};
+        })();
+        const combosP = fetchWithRetry("https://data-api.polymarket.com/v1/positions/combos?user=" + addr, 3, 15000)
+          .then(res => res.ok ? res.json() : {combos:[]})
+          .then(j => (Array.isArray(j.combos) ? j.combos : [])
+            .filter(c => (Number(c.shares_balance) || 0) > 0).map(mapComboPosition))
+          .catch(() => []); // combos are additive — their failure shouldn't sink the wallet
+        const [singles, combos] = await Promise.all([singlesP, combosP]);
+        return {ok:true, rows: singles.out.concat(combos), truncated: singles.truncated};
       }catch(e){
         return {ok:false, addr, err:e.message};
       }
@@ -1359,7 +1404,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const pnl = Number(p.cashPnl)||0;
     const pct = Number(p.percentPnl);
     const mkt = '<div class="market-cell">' + (p.icon ? '<img src="'+esc(p.icon)+'" alt="" loading="lazy">' : "")
-      + '<a href="https://polymarket.com/event/'+esc(p.eventSlug||p.slug||"")+'" target="_blank" rel="noopener">'+esc(p.title||"—")+'</a></div>';
+      + (p.isCombo
+        ? '<span>'+esc(p.title||"—")+'</span> <span class="badge combo">COMBO</span>'
+        : '<a href="https://polymarket.com/event/'+esc(p.eventSlug||p.slug||"")+'" target="_blank" rel="noopener">'+esc(p.title||"—")+'</a>')
+      + '</div>';
     return "<tr>"
       + '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(p.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(p.proxyWallet))+"</a></td>"
       + "<td>"+mkt+"</td>"
@@ -1422,7 +1470,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
   function showJson(){
     setView("tabJson", "jsonWrap");
-    $("dlBtn").textContent = "Download JSON";
+    $("dlBtn").title = "Export the current view as JSON";
     const slice = filteredRecords.slice(0, JSON_VIEW_CAP);
     $("jsonNote").textContent = filteredRecords.length > JSON_VIEW_CAP
       ? "Showing first " + JSON_VIEW_CAP.toLocaleString() + " of " + filteredRecords.length.toLocaleString() + " records — use Download JSON for the full set."
