@@ -1373,6 +1373,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let allPositions = [], posLoaded = false, posLoading = false, posRunSeq = 0;
   let posError = null, posTruncated = false, posFailedWallets = [], posRenderKey = null;
   let posStatusFilter = new Set(["open"]); // of "open" | "won" | "loss" | "redeemable" — Open by default
+  let posRendered = []; // the rows currently in the DOM, for tooltip lookups
   const POS_MAX_PAGES = 4;   // 4 × 500 = 2,000 positions per wallet, surfaced in the note when hit
   const POS_VIEW_CAP = 1000; // DOM safety, like JSON_VIEW_CAP — the CSV still exports everything
   // combo (parlay) positions come from a separate endpoint; map them onto the same
@@ -1380,6 +1381,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // from the product of the legs' current prices (the YES side of a parlay).
   function mapComboPosition(c){
     const legs = c.legs || [];
+    // the combos endpoint already carries each leg's market title — prime the
+    // tooltip's title cache so leg names render without any extra fetch
+    legs.forEach(l => {
+      if(l.leg_condition_id && l.market && l.market.title)
+        titleCache.set(l.leg_condition_id.toLowerCase(), l.market.title);
+    });
     const st = String(c.status || "");
     const est = legs.reduce((m,l) => m * (Number(l.leg_current_price) || 0), 1);
     const cur = /LOSS/.test(st) ? 0 : /WIN/.test(st) ? 1 : (c.side === "NO" ? 1 - est : est);
@@ -1392,7 +1399,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       size, avgPrice: Number(c.entry_avg_price_usdc) || 0, curPrice: cur,
       initialValue: initial, currentValue: value,
       cashPnl: pnl, percentPnl: initial ? pnl / initial * 100 : 0,
-      redeemable: !!c.redeemable, isCombo: true,
+      redeemable: !!c.redeemable, isCombo: true, legs,
       posStatus: /LOSS/.test(st) ? "loss" : /WIN/.test(st) ? "won" : "open",
       title: legs.map(l => (l.market && l.market.outcome) || l.leg_outcome_label || "?").join(" + "),
       outcome: c.side || "",
@@ -1498,10 +1505,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(resolvedWin) return p.redeemable ? "redeemable" : "won";
     return "open";
   }
-  function posRowHtml(p){
+  function posRowHtml(p, idx){
     const pnl = Number(p.cashPnl)||0;
     const pct = Number(p.percentPnl);
-    const mkt = '<div class="market-cell">' + (p.icon ? '<img src="'+esc(p.icon)+'" alt="" loading="lazy">' : "")
+    const mkt = '<div class="market-cell" data-pi="'+idx+'">' + (p.icon ? '<img src="'+esc(p.icon)+'" alt="" loading="lazy">' : "")
       + (p.isCombo
         ? '<span>'+esc(p.title||"—")+'</span> <span class="badge combo">COMBO</span>'
         : '<a href="https://polymarket.com/event/'+esc(p.eventSlug||p.slug||"")+'" target="_blank" rel="noopener">'+esc(p.title||"—")+'</a>')
@@ -1566,7 +1573,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(posLoaded && posFailedWallets.length)
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
     $("posNote").textContent = note;
-    $("posBody").innerHTML = rows.slice(0, POS_VIEW_CAP).map(posRowHtml).join("");
+    posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
+    hideTooltip(); // rows are being replaced under any open tooltip
+    $("posBody").innerHTML = posRendered.map((p, i) => posRowHtml(p, i)).join("");
     // grab-cursor affordance when the positions table overflows sideways
     $("posWrap").classList.toggle("grabbable", $("posWrap").scrollWidth > $("posWrap").clientWidth);
   }
@@ -1754,19 +1763,47 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     positionTooltip(x, y);
   }
 
+  // positions tooltip: single positions show the market + prices; combos render
+  // their legs straight from the data the combos endpoint already delivered
+  function posTooltipHtml(p){
+    const legs = p.isCombo ? (p.legs || []) : null;
+    let h = legs && legs.length
+      ? '<div class="tt-title">Combo · ' + legs.length + ' legs</div>'
+      : '<div class="tt-title">' + esc(p.title || "(untitled market)") + "</div>";
+    const bits = [];
+    if(p.outcome) bits.push("Outcome: " + esc(p.outcome));
+    if(p.avgPrice != null) bits.push("avg @ " + Number(p.avgPrice).toFixed(3));
+    if(p.curPrice != null) bits.push("now " + Number(p.curPrice).toFixed(3));
+    bits.push(posStatus(p).toUpperCase());
+    h += '<div class="tt-sub">' + bits.join(" · ") + "</div>";
+    if(legs) h += legsHtml(legs, splitComboTitle(p.title));
+    return h;
+  }
+  function showPosTooltipFor(cell, x, y){
+    const p = posRendered[Number(cell.dataset.pi)];
+    if(!p) return;
+    ++ttToken;
+    tooltip.innerHTML = posTooltipHtml(p);
+    positionTooltip(x, y);
+  }
+
+  function wireTooltip(bodyEl, show){
+    bodyEl.addEventListener("mouseover", e => {
+      const cell = e.target.closest(".market-cell");
+      if(cell && bodyEl.contains(cell)) show(cell, e.clientX, e.clientY);
+    });
+    bodyEl.addEventListener("mousemove", e => {
+      const cell = e.target.closest(".market-cell");
+      if(cell && tooltip.style.display === "block") positionTooltip(e.clientX, e.clientY);
+    });
+    bodyEl.addEventListener("mouseout", e => {
+      const cell = e.target.closest(".market-cell");
+      if(cell && !cell.contains(e.relatedTarget)) hideTooltip();
+    });
+  }
   const tbodyEl = $("tableBody");
-  tbodyEl.addEventListener("mouseover", e => {
-    const cell = e.target.closest(".market-cell");
-    if(cell && tbodyEl.contains(cell)) showTooltipFor(cell, e.clientX, e.clientY);
-  });
-  tbodyEl.addEventListener("mousemove", e => {
-    const cell = e.target.closest(".market-cell");
-    if(cell && tooltip.style.display === "block") positionTooltip(e.clientX, e.clientY);
-  });
-  tbodyEl.addEventListener("mouseout", e => {
-    const cell = e.target.closest(".market-cell");
-    if(cell && !cell.contains(e.relatedTarget)) hideTooltip();
-  });
+  wireTooltip(tbodyEl, showTooltipFor);
+  wireTooltip($("posBody"), showPosTooltipFor);
   window.addEventListener("scroll", hideTooltip, true);
 
   // ---------- events ----------
@@ -2028,8 +2065,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   });
 
   // ---------- resizable columns (drag edge; double-click edge to reset) ----------
+  // applied to both the activity and the positions table
   const measureCtx = document.createElement("canvas").getContext("2d");
-  const tableEl = document.querySelector("table");
+  function enableResize(tableEl){
   const headerCells = Array.from(tableEl.querySelectorAll("thead th"));
   function freezeWidths(){
     if(tableEl.style.tableLayout === "fixed") return;
@@ -2059,7 +2097,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const minW = Math.ceil(measureCtx.measureText((th.textContent||"").trim()).width * 1.12)
         + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 10;
       h.classList.add("dragging");
-      h.setPointerCapture(e.pointerId);
+      try{ h.setPointerCapture(e.pointerId); }catch(_){}
       const move = ev => { th.style.width = Math.max(minW, startW + ev.clientX - startX) + "px"; };
       const up = ev => {
         h.removeEventListener("pointermove", move);
@@ -2075,6 +2113,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       document.body.style.cursor = "col-resize";
     });
   });
+  }
+  enableResize(document.querySelector("#tableWrap table"));
+  enableResize(document.querySelector("#posWrap table"));
   // ---------- drag anywhere in a table to scroll it sideways ----------
   // A press only becomes a pan after a small movement threshold, so plain
   // clicks (sort headers, type-badge market filter, links) still work; after
