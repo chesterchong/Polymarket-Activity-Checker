@@ -181,9 +181,16 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 
 .table-wrap{display:none; border:1px solid var(--border); overflow-x:auto;}
 .table-wrap.active{display:block;}
-/* positions view: its own table — the Columns sidebar only governs the activity
-   table, so hide it while positions are shown */
-.table-area:has(.pos-wrap.active) .side-bar{display:none;}
+/* positions view: the results bar swaps to position-appropriate controls */
+.results-bar.pos-mode #typeSel,
+.results-bar.pos-mode #sideSel,
+.results-bar.pos-mode #fundingChip,
+.results-bar.pos-mode .fchip-sep,
+.results-bar.pos-mode .fchip[data-cat="deposit"],
+.results-bar.pos-mode .fchip[data-cat="withdrawal"],
+.results-bar.pos-mode .fchip[data-cat="rewards"]{display:none;}
+.fchips.pos-only{display:none;}
+.results-bar.pos-mode .fchips.pos-only{display:inline-flex;}
 .pos-note{padding:10px 14px; font-size:12px; color:var(--muted-foreground); border-bottom:1px solid var(--border);}
 .pos-note:empty{display:none;}
 td.pos{color:var(--success);}
@@ -417,7 +424,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <div class="rb-row">
         <div class="tabs" role="tablist">
           <button class="tab on" id="tabTable" role="tab">Activity</button>
-          <button class="tab" id="tabPositions" role="tab">Positions</button>
+          <button class="tab" id="tabPositions" role="tab">Active Position</button>
           <button class="tab" id="tabJson" role="tab">Json</button>
         </div>
         <span class="flex-spacer"></span>
@@ -458,6 +465,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="fchip" data-cat="deposit" title="USDC deposits, including transfers received from other users">Deposit</button>
           <button type="button" class="fchip" data-cat="withdrawal" title="USDC withdrawals, including transfers sent to other users">Withdrawal</button>
           <button type="button" class="fchip" data-cat="rewards" title="Rewards, yield, rebates and referral payouts">Rewards</button>
+        </div>
+        <div class="fchips pos-only" role="group" aria-label="Position status">
+          <button type="button" class="fchip" data-pstat="open" title="Markets not yet resolved">Open</button>
+          <button type="button" class="fchip" data-pstat="won" title="Resolved in this wallet's favor">Won</button>
+          <button type="button" class="fchip" data-pstat="loss" title="Resolved against this wallet">Loss</button>
+          <button type="button" class="fchip" data-pstat="redeemable" title="Resolved and awaiting redemption">Redeemable</button>
         </div>
         <span class="date-range" title="Show records between these dates">
           <span class="dr-label">Date</span>
@@ -635,13 +648,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
   async function fetchWithRetry(url, tries=3, timeoutMs=0){
     for(let attempt=0; ; attempt++){
-      const res = await fetch(url, timeoutMs ? {signal: AbortSignal.timeout(timeoutMs)} : undefined);
-      if((res.status === 429 || res.status >= 500) && attempt < tries-1){
-        const ra = Number(res.headers.get("Retry-After"));
-        await sleep(ra > 0 ? ra*1000 : 1000 * Math.pow(2, attempt));
-        continue;
+      try{
+        const res = await fetch(url, timeoutMs ? {signal: AbortSignal.timeout(timeoutMs)} : undefined);
+        if((res.status === 429 || res.status >= 500) && attempt < tries-1){
+          const ra = Number(res.headers.get("Retry-After"));
+          await sleep(ra > 0 ? ra*1000 : 1000 * Math.pow(2, attempt));
+          continue;
+        }
+        return res;
+      }catch(e){
+        // timeouts and transient network drops get the same backoff as 5xx —
+        // previously a single TimeoutError rejected straight through the "retries"
+        if(attempt >= tries-1) throw e;
+        await sleep(1000 * Math.pow(2, attempt));
       }
-      return res;
     }
   }
   // The API rejects offset > 5000, so one offset run only covers the most recent
@@ -823,8 +843,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return anchor;
   }
   async function getLogs(qs){
-    // fetchWithRetry backs off on 429/5xx — Blockscout throws transient 500s
-    const res = await fetchWithRetry("https://polygon.blockscout.com/api?module=logs&action=getLogs&" + qs, 3, 25000);
+    // fetchWithRetry backs off on 429/5xx AND timeouts — Blockscout throws transient
+    // 500s and, when degraded, 40s+ hangs; nothing blocks on this, so be patient
+    const res = await fetchWithRetry("https://polygon.blockscout.com/api?module=logs&action=getLogs&" + qs, 3, 35000);
     if(!res.ok) throw new Error("logs HTTP " + res.status);
     const j = await res.json();
     return Array.isArray(j.result) ? j.result : [];
@@ -835,14 +856,21 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const winSecs = startTs ? (now - startTs) : 90*86400; // all-time capped at ~90 days here
     const fromBlock = Math.max(0, latest - Math.ceil(winSecs / 2.1 * 1.15)); // 15% margin; exact ts filter below
     const w = pad32(addr);
-    const base = "fromBlock=" + fromBlock + "&toBlock=latest&topic0=" + TRANSFER_TOPIC
-      + "&topic0_1_opr=and&topic0_2_opr=and&topic1_2_opr=and";
-    const [mints, unwraps, relayOut] = await Promise.all([
-      getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + pad32(ZERO_ADDR) + "&topic2=" + w),
-      getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + w + "&topic2=" + pad32(PUSD_ADDR)),
-      getLogs(base + "&address=" + USDC_TOKENS[0] + "&topic1=" + w + "&topic2=" + pad32(RELAY_DEPOSITORY))
-    ]);
-    const truncated = [mints, unwraps, relayOut].some(l => l.length >= 1000); // API result cap
+    // slice the window into ~30-day block spans (at most 6): each query asks a much
+    // smaller question, dodging explorer timeouts on busy wallets, and the API's
+    // 1,000-log result cap then applies per slice instead of per whole window
+    const nChunks = Math.min(6, Math.max(1, Math.ceil(winSecs / (30*86400))));
+    const span = Math.ceil((latest - fromBlock + 1) / nChunks);
+    const queries = [];
+    for(let b = fromBlock; b <= latest; b += span){
+      const base = "fromBlock=" + b + "&toBlock=" + Math.min(b + span - 1, latest)
+        + "&topic0=" + TRANSFER_TOPIC + "&topic0_1_opr=and&topic0_2_opr=and&topic1_2_opr=and";
+      queries.push(getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + pad32(ZERO_ADDR) + "&topic2=" + w).then(l => ({l, kind:"mint"})));
+      queries.push(getLogs(base + "&address=" + PUSD_ADDR + "&topic1=" + w + "&topic2=" + pad32(PUSD_ADDR)).then(l => ({l, kind:"unwrap"})));
+      queries.push(getLogs(base + "&address=" + USDC_TOKENS[0] + "&topic1=" + w + "&topic2=" + pad32(RELAY_DEPOSITORY)).then(l => ({l, kind:"relay"})));
+    }
+    const parts = await Promise.all(queries);
+    const truncated = parts.some(p => p.l.length >= 1000); // API result cap, per slice
     const byTx = new Map();
     const add = (l, kind) => {
       const ts = parseInt(l.timeStamp, 16), amt = parseInt(l.data, 16)/1e6;
@@ -853,9 +881,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       g.ts = Math.min(g.ts, ts);
       byTx.set(l.transactionHash, g);
     };
-    mints.forEach(l => add(l, "mint"));
-    unwraps.forEach(l => add(l, "unwrap"));
-    relayOut.forEach(l => add(l, "relay"));
+    parts.forEach(p => p.l.forEach(l => add(l, p.kind)));
     const out = [];
     for(const [txh, g] of byTx){
       const net = g.dep - g.wd;
@@ -1228,7 +1254,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       ? '<a class="tx-link mono" href="https://polygonscan.com/tx/'+esc(r.transactionHash)+'" target="_blank" rel="noopener">'+esc(r.transactionHash.slice(0,10))+'…</a>'
         + '<button type="button" class="copy-btn" data-tx="'+esc(r.transactionHash)+'" title="Copy full transaction hash" aria-label="Copy full transaction hash">⧉</button>'
       : "";
-    // one cell per COLS entry, in original index order — emitted in colOrder order
+    // one cell per column, in original index order — emitted in the view's column order
     const cells = [
       '<td class="time-cell mono">'+fmtTime(r.timestamp||0)+"</td>",
       '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(r.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(r.proxyWallet))+"</a></td>",
@@ -1242,7 +1268,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       '<td class="num mono fee-cell" data-i="'+idx+'">'+feeCellText(r)+"</td>",
       "<td>"+tx+"</td>"
     ];
-    return "<tr>" + colOrder.map(i => cells[i]).join("") + "</tr>";
+    return "<tr>" + actCols.order.map(i => cells[i]).join("") + "</tr>";
   }
 
   function renderTableChunk(reset){
@@ -1260,6 +1286,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function setView(tab, wrap){
     ["tabTable","tabPositions","tabJson"].forEach(id => $(id).classList.toggle("on", id === tab));
     ["tableWrap","posWrap","jsonWrap"].forEach(id => $(id).classList.toggle("active", id === wrap));
+    // the results bar and the Columns panel both follow the active view
+    $("resultsBar").classList.toggle("pos-mode", tab === "tabPositions");
+    buildColsList();
+    updateColsDot();
   }
   function showTable(){
     setView("tabTable", "tableWrap");
@@ -1318,6 +1348,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // ---------- positions tab (data-api /positions — independent of the activity feed) ----------
   let allPositions = [], posLoaded = false, posLoading = false, posRunSeq = 0;
   let posError = null, posTruncated = false, posFailedWallets = [], posRenderKey = null;
+  let posStatusFilter = new Set(); // of "open" | "won" | "loss" | "redeemable"
   const POS_MAX_PAGES = 4;   // 4 × 500 = 2,000 positions per wallet, surfaced in the note when hit
   const POS_VIEW_CAP = 1000; // DOM safety, like JSON_VIEW_CAP — the CSV still exports everything
   // combo (parlay) positions come from a separate endpoint; map them onto the same
@@ -1338,6 +1369,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       initialValue: initial, currentValue: value,
       cashPnl: pnl, percentPnl: initial ? pnl / initial * 100 : 0,
       redeemable: !!c.redeemable, isCombo: true,
+      posStatus: /LOSS/.test(st) ? "loss" : /WIN/.test(st) ? "won" : "open",
       title: legs.map(l => (l.market && l.market.outcome) || l.leg_outcome_label || "?").join(" + "),
       outcome: c.side || "",
       icon: (legs[0] && legs[0].market && legs[0].market.icon_url) || "",
@@ -1390,15 +1422,26 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     else if(posFailedWallets.length) posError = results.find(r => !r.ok).err;
     renderPositions();
   }
-  // the results-bar search filters positions too; other filters are feed-only
+  // positions honor the search box, the Single/Combo chips, and the status chips
   function visiblePositions(){
     const q = $("searchBox").value.trim().toLowerCase();
-    const rows = allPositions.filter(p => !q
+    let rows = allPositions.filter(p => !q
       || (p.title||"").toLowerCase().includes(q)
       || (p.outcome||"").toLowerCase().includes(q)
       || (p.slug||"").toLowerCase().includes(q));
+    const wantSingle = catFilter.has("single"), wantCombo = catFilter.has("combo");
+    if(wantSingle || wantCombo) rows = rows.filter(p => p.isCombo ? wantCombo : wantSingle);
+    if(posStatusFilter.size)
+      rows = rows.filter(p => posStatusFilter.has(posStatus(p))
+        || (posStatusFilter.has("redeemable") && p.redeemable));
     rows.sort((a,b)=>(Number(b.currentValue)||0)-(Number(a.currentValue)||0));
     return rows;
+  }
+  // single positions: redeemable means the market resolved (win or loss by price);
+  // combos carry their status from the API
+  function posStatus(p){
+    if(p.isCombo) return p.posStatus || "open";
+    return p.redeemable ? ((Number(p.curPrice)||0) >= 0.5 ? "won" : "loss") : "open";
   }
   function posRowHtml(p){
     const pnl = Number(p.cashPnl)||0;
@@ -1408,24 +1451,26 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         ? '<span>'+esc(p.title||"—")+'</span> <span class="badge combo">COMBO</span>'
         : '<a href="https://polymarket.com/event/'+esc(p.eventSlug||p.slug||"")+'" target="_blank" rel="noopener">'+esc(p.title||"—")+'</a>')
       + '</div>';
-    return "<tr>"
-      + '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(p.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(p.proxyWallet))+"</a></td>"
-      + "<td>"+mkt+"</td>"
-      + '<td class="outcome">'+esc(p.outcome||"")+(p.redeemable ? ' <span class="badge buy">REDEEMABLE</span>' : "")+"</td>"
-      + '<td class="num mono">'+fmtNum(p.size)+"</td>"
-      + '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "")+"</td>"
-      + '<td class="num mono">'+(p.curPrice!=null ? Number(p.curPrice).toFixed(3) : "")+"</td>"
-      + '<td class="num mono">$'+fmtUsd(p.currentValue)+"</td>"
-      + '<td class="num mono '+(pnl >= 0 ? "pos" : "neg")+'">'+(pnl < 0 ? "-$" : "$")+fmtUsd(Math.abs(pnl))
-        + (isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>"
-      + '<td class="mono">'+esc(p.endDate||"")+"</td>"
-      + "</tr>";
+    const cells = [
+      '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(p.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(p.proxyWallet))+"</a></td>",
+      "<td>"+mkt+"</td>",
+      '<td class="outcome">'+esc(p.outcome||"")+(p.redeemable ? ' <span class="badge buy">REDEEMABLE</span>' : "")+"</td>",
+      '<td class="num mono">'+fmtNum(p.size)+"</td>",
+      '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "")+"</td>",
+      '<td class="num mono">'+(p.curPrice!=null ? Number(p.curPrice).toFixed(3) : "")+"</td>",
+      '<td class="num mono">$'+fmtUsd(p.currentValue)+"</td>",
+      '<td class="num mono '+(pnl >= 0 ? "pos" : "neg")+'">'+(pnl < 0 ? "-$" : "$")+fmtUsd(Math.abs(pnl))
+        + (isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>",
+      '<td class="mono">'+esc(p.endDate||"")+"</td>"
+    ];
+    return "<tr>" + posCols.order.map(i => cells[i]).join("") + "</tr>";
   }
   function renderPositions(){
     if(!$("posWrap").classList.contains("active")) return;
     const q = $("searchBox").value.trim();
     // progressive feed chunks re-dispatch here constantly — skip identical re-renders
-    const key = [posRunSeq, posLoading, posLoaded, posError, allPositions.length, q.toLowerCase()].join("|");
+    const key = [posRunSeq, posLoading, posLoaded, posError, allPositions.length, q.toLowerCase(),
+      [...catFilter].sort().join(","), [...posStatusFilter].sort().join(",")].join("|");
     if(key === posRenderKey) return;
     posRenderKey = key;
     const rows = visiblePositions();
@@ -1714,7 +1759,16 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     catFilter = next;
     updateFchips();
     refreshResults();
+    renderPositions(); // Single/Combo also narrow the positions view
   }
+  // position status chips (multi-select, positions view only)
+  document.querySelectorAll(".fchip[data-pstat]").forEach(b =>
+    b.addEventListener("click", ()=>{
+      const v = b.dataset.pstat;
+      if(posStatusFilter.has(v)) posStatusFilter.delete(v); else posStatusFilter.add(v);
+      b.classList.toggle("on", posStatusFilter.has(v));
+      renderPositions();
+    }));
   document.querySelectorAll(".fchip[data-cat]").forEach(b =>
     b.addEventListener("click", ()=>{
       const next = new Set(catFilter);
@@ -1740,50 +1794,68 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     refreshResults();
   });
 
-  // column show/hide + drag-to-reorder — checkbox list in the right-side panel.
-  // colOrder maps display position -> original column index; the header row,
-  // body cells (rowHtml), and the nth-child hiding CSS all follow it.
-  const COLS = ["Time","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"];
-  const headRow = document.querySelector("thead tr");
-  const origThs = Array.from(headRow.children); // captured in original COLS order
-  var colOrder = COLS.map((_, i) => i);
-  try{
-    const saved = JSON.parse(localStorage.getItem("pmac_col_order"));
-    if(Array.isArray(saved) && saved.length === COLS.length
-      && [...saved].sort((a,b)=>a-b).every((v,i)=>v===i)) colOrder = saved;
-  }catch(e){}
-  let hiddenCols = new Set();
-  try{ hiddenCols = new Set((JSON.parse(localStorage.getItem("pmac_hidden_cols"))||[]).filter(i => i>=0 && i<COLS.length)); }catch(e){}
-  const colStyle = document.createElement("style");
-  document.head.appendChild(colStyle);
-  function applyHiddenCols(){
-    // hiddenCols holds original indices; nth-child works on display positions
-    colStyle.textContent = [...hiddenCols]
-      .map(i => colOrder.indexOf(i) + 1)
-      .map(p => "#tableWrap th:nth-child("+p+"),#tableWrap td:nth-child("+p+"){display:none;}")
+  // column show/hide + drag-to-reorder — the right-side panel edits whichever
+  // view is active. Each view has its own config: order maps display position ->
+  // original column index; the header row, body cells, and nth-child hiding CSS
+  // all follow it, persisted per view.
+  function makeTableCfg(colNames, wrapId, orderKey, hiddenKey, onChange){
+    const headRow = document.querySelector("#" + wrapId + " thead tr");
+    const cfg = {
+      colNames, wrapId, orderKey, hiddenKey, onChange,
+      headRow, origThs: Array.from(headRow.children),
+      order: colNames.map((_, i) => i),
+      hidden: new Set(),
+      style: document.createElement("style")
+    };
+    document.head.appendChild(cfg.style);
+    try{
+      const saved = JSON.parse(localStorage.getItem(orderKey));
+      if(Array.isArray(saved) && saved.length === colNames.length
+        && [...saved].sort((a,b)=>a-b).every((v,i)=>v===i)) cfg.order = saved;
+    }catch(e){}
+    try{ cfg.hidden = new Set((JSON.parse(localStorage.getItem(hiddenKey))||[]).filter(i => i>=0 && i<colNames.length)); }catch(e){}
+    return cfg;
+  }
+  const actCols = makeTableCfg(
+    ["Time","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"],
+    "tableWrap", "pmac_col_order", "pmac_hidden_cols",
+    () => { if($("tableWrap").classList.contains("active")) renderTableChunk(true); });
+  const posCols = makeTableCfg(
+    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Value","PnL","End date"],
+    "posWrap", "pmac_pos_col_order", "pmac_pos_hidden_cols",
+    () => { posRenderKey = null; renderPositions(); });
+  const activeColsCfg = () => $("tabPositions").classList.contains("on") ? posCols : actCols;
+  function updateColsDot(){
+    $("sideTab").classList.toggle("has-hidden", activeColsCfg().hidden.size > 0);
+  }
+  function cfgApplyHidden(cfg){
+    cfg.style.textContent = [...cfg.hidden]
+      .map(i => cfg.order.indexOf(i) + 1)
+      .map(p => "#"+cfg.wrapId+" th:nth-child("+p+"),#"+cfg.wrapId+" td:nth-child("+p+"){display:none;}")
       .join("");
-    try{ localStorage.setItem("pmac_hidden_cols", JSON.stringify([...hiddenCols])); }catch(e){}
-    // dot on the collapsed tab when the view is missing columns
-    $("sideTab").classList.toggle("has-hidden", hiddenCols.size > 0);
+    try{ localStorage.setItem(cfg.hiddenKey, JSON.stringify([...cfg.hidden])); }catch(e){}
+    updateColsDot();
+  }
+  function cfgApplyOrder(cfg){
+    cfg.order.forEach(i => cfg.headRow.appendChild(cfg.origThs[i]));
+    try{ localStorage.setItem(cfg.orderKey, JSON.stringify(cfg.order)); }catch(e){}
+    cfgApplyHidden(cfg);
+    buildColsList();
+    cfg.onChange();
   }
   function buildColsList(){
-    $("colsList").innerHTML = colOrder.map((i, pos) =>
+    const cfg = activeColsCfg();
+    $("colsList").innerHTML = cfg.order.map((i, pos) =>
       '<label class="cols-item" draggable="true" data-pos="'+pos+'">'
       + '<span class="drag-dots" title="Drag to reorder">⠿</span>'
-      + '<input type="checkbox" data-col="'+i+'"'+(hiddenCols.has(i) ? "" : " checked")+'> '+esc(COLS[i])+'</label>'
+      + '<input type="checkbox" data-col="'+i+'"'+(cfg.hidden.has(i) ? "" : " checked")+'> '+esc(cfg.colNames[i])+'</label>'
     ).join("");
   }
-  function applyColOrder(){
-    colOrder.forEach(i => headRow.appendChild(origThs[i]));
-    try{ localStorage.setItem("pmac_col_order", JSON.stringify(colOrder)); }catch(e){}
-    applyHiddenCols();
-    buildColsList();
-    if($("tableWrap").classList.contains("active")) renderTableChunk(true);
-  }
   $("colsList").addEventListener("change", e => {
+    const cfg = activeColsCfg();
     const i = Number(e.target.dataset.col);
-    if(e.target.checked) hiddenCols.delete(i); else hiddenCols.add(i);
-    applyHiddenCols();
+    if(e.target.checked) cfg.hidden.delete(i); else cfg.hidden.add(i);
+    cfgApplyHidden(cfg);
   });
   // drag one row of the list onto another to reorder (top/bottom half = above/below)
   let dragPos = null;
@@ -1813,15 +1885,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   colsListEl.addEventListener("drop", e => {
     const it = e.target.closest(".cols-item"); if(!it || dragPos === null) return;
     e.preventDefault();
+    const cfg = activeColsCfg();
     const r = it.getBoundingClientRect();
     let to = Number(it.dataset.pos) + (e.clientY > r.top + r.height/2 ? 1 : 0);
-    const [moved] = colOrder.splice(dragPos, 1);
+    const [moved] = cfg.order.splice(dragPos, 1);
     if(to > dragPos) to--;
-    colOrder.splice(to, 0, moved);
+    cfg.order.splice(to, 0, moved);
     clearDropMarks(); dragPos = null;
-    applyColOrder();
+    cfgApplyOrder(cfg);
   });
-  applyColOrder();
+  cfgApplyOrder(actCols);
+  cfgApplyOrder(posCols);
 
   // active-filter chip for badge-click market filters
   function renderChips(){
@@ -2000,6 +2074,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     marketFilter = null; renderChips();
     catFilter = new Set();
     updateFchips();
+    posStatusFilter = new Set();
+    document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.remove("on"));
     refreshResults();
     renderPositions(); // clearing searchBox programmatically fires no input event
   });
