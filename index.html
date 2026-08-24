@@ -313,6 +313,11 @@ input[type="date"]{height:30px; border:1px solid var(--border); background:var(-
 .fchip:hover{color:var(--foreground);}
 .fchip.on{background:var(--primary); border-color:var(--primary); color:var(--primary-foreground);}
 .fchip:focus-visible{outline:2px solid var(--primary); outline-offset:1px;}
+.fchip .cnt{
+  display:inline-block; min-width:16px; padding:1px 5px; margin-left:2px; border-radius:999px;
+  background:var(--muted); color:var(--muted-foreground); font-size:10px; font-variant-numeric:tabular-nums;
+}
+.fchip.on .cnt{background:rgba(255,255,255,.22); color:var(--primary-foreground);}
 .fchip-sep{width:1px; height:18px; background:var(--border); margin:0 4px; flex-shrink:0;}
 .chips{display:inline-flex; gap:6px;}
 .chip{height:32px; border:1px dashed var(--primary); color:var(--primary); background:transparent; font-size:12px; padding:0 14px; cursor:pointer; font-family:inherit; border-radius:999px;}
@@ -467,8 +472,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="fchip" data-cat="rewards" title="Rewards, yield, rebates and referral payouts">Rewards</button>
         </div>
         <div class="fchips pos-only" role="group" aria-label="Position status">
-          <button type="button" class="fchip" data-pstat="open" title="Markets not yet resolved">Open</button>
-          <button type="button" class="fchip" data-pstat="redeemable" title="Resolved and awaiting redemption">Redeemable</button>
+          <button type="button" class="fchip on" data-pstat="open" title="Markets still in progress">Open <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="won" title="Resolved with profit, already settled">Won <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="loss" title="Resolved as a loss, or valued at $0">Loss <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="redeemable" title="Won but not yet redeemed">Redeemable <span class="cnt">0</span></button>
         </div>
         <span class="date-range" title="Show records between these dates">
           <span class="dr-label">Date</span>
@@ -1346,7 +1353,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // ---------- positions tab (data-api /positions — independent of the activity feed) ----------
   let allPositions = [], posLoaded = false, posLoading = false, posRunSeq = 0;
   let posError = null, posTruncated = false, posFailedWallets = [], posRenderKey = null;
-  let posStatusFilter = new Set(); // of "open" | "won" | "loss" | "redeemable"
+  let posStatusFilter = new Set(["open"]); // of "open" | "won" | "loss" | "redeemable" — Open by default
   const POS_MAX_PAGES = 4;   // 4 × 500 = 2,000 positions per wallet, surfaced in the note when hit
   const POS_VIEW_CAP = 1000; // DOM safety, like JSON_VIEW_CAP — the CSV still exports everything
   // combo (parlay) positions come from a separate endpoint; map them onto the same
@@ -1429,17 +1436,16 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(myRun !== posRunSeq) return;
     posLoading = false;
     const ok = results.filter(r => r.ok);
-    // worthless holdings (resolved losses at $0) are not active positions — drop
-    // them at the source so the table, totals, and the CSV export all agree
-    allPositions = ok.flatMap(r => r.rows).filter(p => (Number(p.currentValue) || 0) > 0);
+    allPositions = ok.flatMap(r => r.rows);
     posTruncated = ok.some(r => r.truncated);
     posFailedWallets = results.filter(r => !r.ok).map(r => r.addr);
     if(ok.length) posLoaded = true;
     else if(posFailedWallets.length) posError = results.find(r => !r.ok).err;
     renderPositions();
   }
-  // positions honor the search box, the Single/Combo chips, and the status chips
-  function visiblePositions(){
+  // positions honor the search box, the Single/Combo chips, and the status chips.
+  // basePositions is the set BEFORE status filtering — the chip counts read it.
+  function basePositions(){
     const q = $("searchBox").value.trim().toLowerCase();
     let rows = allPositions.filter(p => !q
       || (p.title||"").toLowerCase().includes(q)
@@ -1447,17 +1453,28 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       || (p.slug||"").toLowerCase().includes(q));
     const wantSingle = catFilter.has("single"), wantCombo = catFilter.has("combo");
     if(wantSingle || wantCombo) rows = rows.filter(p => p.isCombo ? wantCombo : wantSingle);
-    if(posStatusFilter.size)
-      rows = rows.filter(p => posStatusFilter.has(posStatus(p))
-        || (posStatusFilter.has("redeemable") && p.redeemable));
+    return rows;
+  }
+  function visiblePositions(){
+    let rows = basePositions();
+    if(posStatusFilter.size) rows = rows.filter(p => posStatusFilter.has(posStatus(p)));
     rows.sort((a,b)=>(Number(b.currentValue)||0)-(Number(a.currentValue)||0));
     return rows;
   }
-  // single positions: redeemable means the market resolved (win or loss by price);
-  // combos carry their status from the API
+  // status semantics:
+  //   loss       — resolved against the wallet, OR valued at $0 (regardless of flags)
+  //   redeemable — won but not yet redeemed
+  //   won        — resolved with profit and already settled (no redemption pending)
+  //   open       — market still in progress
   function posStatus(p){
-    if(p.isCombo) return p.posStatus || "open";
-    return p.redeemable ? ((Number(p.curPrice)||0) >= 0.5 ? "won" : "loss") : "open";
+    const value = Number(p.currentValue) || 0;
+    const resolvedLoss = p.isCombo ? p.posStatus === "loss"
+      : (p.redeemable && (Number(p.curPrice)||0) < 0.5);
+    if(resolvedLoss || value <= 0) return "loss";
+    const resolvedWin = p.isCombo ? p.posStatus === "won"
+      : (p.redeemable && (Number(p.curPrice)||0) >= 0.5);
+    if(resolvedWin) return p.redeemable ? "redeemable" : "won";
+    return "open";
   }
   function posRowHtml(p){
     const pnl = Number(p.cashPnl)||0;
@@ -1470,7 +1487,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const cells = [
       '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(p.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(p.proxyWallet))+"</a></td>",
       "<td>"+mkt+"</td>",
-      '<td class="outcome">'+esc(p.outcome||"")+(p.redeemable ? ' <span class="badge buy">REDEEMABLE</span>' : "")+"</td>",
+      '<td class="outcome">'+esc(p.outcome||"")+(function(){
+        const st = posStatus(p);
+        return st === "redeemable" ? ' <span class="badge buy">REDEEMABLE</span>'
+          : st === "won" ? ' <span class="badge buy">WON</span>'
+          : st === "loss" ? ' <span class="badge sell">LOST</span>' : "";
+      })()+"</td>",
       '<td class="num mono">'+fmtNum(p.size)+"</td>",
       '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "")+"</td>",
       '<td class="num mono">'+(p.curPrice!=null ? Number(p.curPrice).toFixed(3) : "")+"</td>",
@@ -1489,6 +1511,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       [...catFilter].sort().join(","), [...posStatusFilter].sort().join(",")].join("|");
     if(key === posRenderKey) return;
     posRenderKey = key;
+    // live counts on the status chips, from the set before status filtering
+    const counts = {open:0, won:0, loss:0, redeemable:0};
+    basePositions().forEach(p => counts[posStatus(p)]++);
+    document.querySelectorAll(".fchip[data-pstat] .cnt").forEach(el =>
+      el.textContent = (counts[el.parentElement.dataset.pstat] || 0).toLocaleString());
     const rows = visiblePositions();
     let note;
     if(posLoading) note = "Loading positions…";
@@ -2090,8 +2117,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     marketFilter = null; renderChips();
     catFilter = new Set();
     updateFchips();
-    posStatusFilter = new Set();
-    document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.remove("on"));
+    posStatusFilter = new Set(["open"]); // Open is the default status selection
+    document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.toggle("on", b.dataset.pstat === "open"));
     refreshResults();
     renderPositions(); // clearing searchBox programmatically fires no input event
   });
