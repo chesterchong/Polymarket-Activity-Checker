@@ -477,7 +477,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <div class="stat" title="Sum of TAKER_REBATE records in view"><div class="label">Taker rebates</div><div class="value" id="stTakerRebates">–</div></div>
         <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
         <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
-        <div class="stat" id="stTimeWrap" title="Total time until the search finished"><div class="label">Search time</div><div class="value" id="stTime">–</div></div>
       </div>
     </div>
 
@@ -490,6 +489,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button class="tab" id="tabPositions" role="tab">Active Position</button>
           <button class="tab" id="tabJson" role="tab">Json</button>
         </div>
+        <span class="hint" id="searchTimeNote"></span>
         <span class="flex-spacer"></span>
         <button class="btn" id="dlBtn">Export</button>
         <select id="rowsSel" aria-label="Rows to display" title="Rows to display">
@@ -1077,7 +1077,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const notes = [];
     const tStart = performance.now();
     let tFirst = null;
-    $("stTime").textContent = "–";
+    $("searchTimeNote").textContent = "";
 
     try{
       // Everything runs concurrently: all wallets at once, and per wallet the
@@ -1168,8 +1168,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       fetching = false;
       $("submitBtn").disabled = false;
       $("progressBox").classList.remove("active");
-      $("stTime").textContent = fmtDur(performance.now() - tStart);
-      $("stTimeWrap").title = "Total time until the search finished"
+      $("searchTimeNote").textContent = fmtDur(performance.now() - tStart) + " taken";
+      $("searchTimeNote").title = "Total time until the search finished"
         + (tFirst !== null ? " — first results were visible in " + fmtDur(tFirst) : "");
     }
   }
