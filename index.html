@@ -1010,9 +1010,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   async function fetchPnl(addr, win){
     const plan = pnlPlan(win);
     const res = await fetchWithRetry("https://user-pnl-api.polymarket.com/user-pnl?"
-      + new URLSearchParams({user_address: addr, interval: plan.interval, fidelity: plan.fidelity}));
+      + new URLSearchParams({user_address: addr, interval: plan.interval, fidelity: plan.fidelity}), 3, 15000);
     if(!res.ok) throw new Error("HTTP " + res.status);
     let series = await res.json();
+    // the API sometimes 200s with {"error":"context deadline exceeded"} — that's
+    // a failure to retry, not a $0.00 PnL
+    if(series && !Array.isArray(series) && series.error) throw new Error(series.error);
     if(!Array.isArray(series) || !series.length) return 0;
     if(plan.sliceStart){
       const cutoff = Math.floor(Date.now()/1000) - Number(win);
@@ -1203,9 +1206,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       renderWalletTags();
       $("pnlWindow").textContent = "(" + pnlPlan(win).label + ")";
       $("stPnl").textContent = "…";
-      Promise.all(valid.map(a => fetchPnl(a, win)))
-        .then(parts => renderPnl(parts.reduce((s,v)=>s+v, 0)))
-        .catch(() => renderPnl(null));
+      // the PnL API drops requests under load — retry the whole fetch a couple of
+      // times (spaced out) before conceding a dash; stale runs never overwrite
+      const pnlTok = posRunSeq;
+      const runPnl = attempt => Promise.all(valid.map(a => fetchPnl(a, win)))
+        .then(parts => { if(pnlTok === posRunSeq) renderPnl(parts.reduce((s,v)=>s+v, 0)); })
+        .catch(() => {
+          if(pnlTok !== posRunSeq) return;
+          if(attempt < 3) setTimeout(() => runPnl(attempt + 1), 4000);
+          else renderPnl(null);
+        });
+      runPnl(1);
       $("stPortfolio").textContent = "…";
       Promise.all(valid.map(a =>
         fetchWithRetry("https://data-api.polymarket.com/value?user=" + a, 3, 15000)
