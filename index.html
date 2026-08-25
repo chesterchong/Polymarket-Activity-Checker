@@ -820,6 +820,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   ]);
   const INFRA_NAME_RE = /exchange|conditional ?tokens|negrisk|adapter|fee ?module|uma/i;
   const DW_MAX_PAGES_PER_TOKEN = 20; // 50 transfers per page (1,000 per token); the loop stops early once past the time window
+  const DW_BUDGET_MS = 8000; // how long the full explorer scan may hold up the search before the log fallback answers
 
   async function fetchTransfers(addr, startTs){
     const a = addr.toLowerCase();
@@ -1093,20 +1094,31 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       $("progressText").textContent = "Fetching " + valid.map(short).join(", ") + "…";
       await Promise.all(valid.map(async addr => {
         const startTs = params.start ? Number(params.start) : null;
-        // on-chain USDC deposits/withdrawals, with the topic-indexed-log fallback
-        // (fast even for busy wallets, but covers new-style PUSD/relay flows only)
+        // on-chain USDC deposits/withdrawals. The explorer's transfer index walks
+        // sequential pages at 2-5s each on busy wallets (30s+ total), so the full
+        // scan races an 8s budget while the topic-log fallback warms concurrently.
+        // If the budget wins, the fallback's records show now and dw.upgrade
+        // carries the full scan for an in-place swap when it eventually lands.
+        const whyOf = (e1, e2) => ((e1 && e1.name === "TimeoutError") || (e2 && e2.name === "TimeoutError"))
+          ? "explorer timed out — wallet has too many transfers" : ((e2 && e2.message) || (e1 && e1.message) || "failed");
+        const chainP = fetchTransfers(addr, startTs).then(r => ({kind:"chain", ...r})).catch(e => ({kind:"chainfail", err:e}));
+        const logsP  = fetchTransfersViaLogs(addr, startTs).then(r => ({kind:"logs", ...r})).catch(e => ({kind:"logsfail", err:e}));
         const dwP = (async () => {
-          try{
-            return {kind:"chain", ...(await fetchTransfers(addr, startTs))};
-          }catch(e){
-            try{
-              return {kind:"logs", ...(await fetchTransfersViaLogs(addr, startTs))};
-            }catch(e2){
-              const why = (e.name === "TimeoutError" || e2.name === "TimeoutError")
-                ? "explorer timed out — wallet has too many transfers" : e2.message;
-              return {kind:"none", why};
-            }
+          const first = await Promise.race([chainP, new Promise(res => setTimeout(() => res({kind:"budget"}), DW_BUDGET_MS))]);
+          if(first.kind === "chain") return first;
+          if(first.kind === "chainfail"){
+            // full scan is dead — take the fallback if it's quick, otherwise background it
+            const l = await Promise.race([logsP, new Promise(res => setTimeout(() => res({kind:"budget"}), DW_BUDGET_MS))]);
+            if(l.kind === "logs") return l;
+            if(l.kind === "logsfail") return {kind:"none", why: whyOf(first.err, l.err)};
+            return {kind:"pending", chainP, logsP};
           }
+          // budget hit: take whatever already answered; otherwise release the
+          // search and let the winner merge in the background
+          const snapshot = await Promise.race([chainP, logsP, Promise.resolve({kind:"budget"})]);
+          if(snapshot.kind === "chain") return snapshot;
+          if(snapshot.kind === "logs") return {...snapshot, upgrade: chainP};
+          return {kind:"pending", chainP, logsP};
         })();
         // rebates are sparse but pay out daily — the offset-capped main feed can miss
         // them on hyper-active wallets, so fetch them explicitly and merge (deduped)
@@ -1130,13 +1142,26 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           if(fresh.length){ allRecords.push(...fresh); progressiveRender(); }
         }
 
-        const dw = await dwP;
-        if(dw.kind === "none"){
-          notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + dw.why + ")");
-        }else{
-          // drop txs already represented as activity records (redeems/rewards that
-          // settle through the PUSD wrapper would otherwise look like deposits)
-          const seenTxs = new Set(r.records.map(x => (x.transactionHash||"").toLowerCase()).filter(Boolean));
+        // drop txs already represented as activity records (redeems/rewards that
+        // settle through the PUSD wrapper would otherwise look like deposits)
+        const seenTxs = new Set(r.records.map(x => (x.transactionHash||"").toLowerCase()).filter(Boolean));
+        // merges a resolved D/W result into the table; replace=true swaps out any
+        // records a faster-but-thinner source already contributed for this wallet
+        const mergeDw = (dw, replace) => {
+          if(replace){
+            const al = addr.toLowerCase();
+            for(let i = allRecords.length - 1; i >= 0; i--){
+              const x = allRecords[i];
+              if(x.isTransfer && (x.proxyWallet||"").toLowerCase() === al) allRecords.splice(i, 1);
+            }
+            const li = notes.findIndex(n => n.startsWith(short(addr))
+              && (n.includes("topic-indexed") || n.includes("still loading")));
+            if(li >= 0) notes.splice(li, 1);
+          }
+          if(dw.kind === "none"){
+            notes.push(short(addr) + ": on-chain deposits/withdrawals unavailable (" + dw.why + ")");
+            return;
+          }
           const recs = dw.records.filter(x => !seenTxs.has(x.transactionHash.toLowerCase()));
           if(recs.length){ allRecords.push(...recs); progressiveRender(); }
           if(dw.kind === "chain" && dw.truncated)
@@ -1144,6 +1169,34 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           if(dw.kind === "logs")
             notes.push(short(addr) + ": deposits/withdrawals via topic-indexed logs — new-style (PUSD/relay) transfers only"
               + (startTs ? "" : ", last ~90 days") + (dw.truncated ? "; hit the 1,000-event cap so results may be partial" : ""));
+        };
+        const dw = await dwP;
+        if(dw.kind === "pending"){
+          // the search doesn't wait for a slow explorer — the winner merges later
+          notes.push(short(addr) + ": on-chain deposits/withdrawals still loading in the background…");
+          const runTok = posRunSeq;
+          (async () => {
+            const c = await dw.chainP;
+            const result = c.kind === "chain" ? c
+              : await dw.logsP.then(l => l.kind === "logs" ? l : {kind:"none", why: whyOf(c.err, l.err)});
+            if(runTok !== posRunSeq) return;
+            mergeDw(result, true);
+            errBox.textContent = notes.join(" · ");
+            progressiveRender();
+          })();
+        }else{
+          mergeDw(dw, false);
+          // budget-raced: when the slow full scan finally lands, swap the
+          // fallback's records for its richer set and fix the note in place
+          if(dw.kind === "logs" && dw.upgrade){
+            const runTok = posRunSeq;
+            dw.upgrade.then(c => {
+              if(c.kind !== "chain" || runTok !== posRunSeq) return;
+              mergeDw(c, true);
+              errBox.textContent = notes.join(" · ");
+              progressiveRender();
+            });
+          }
         }
       }));
       renderWalletTags();
