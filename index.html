@@ -477,6 +477,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <div class="stat" title="Sum of TAKER_REBATE records in view"><div class="label">Taker rebates</div><div class="value" id="stTakerRebates">–</div></div>
         <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
         <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
+        <div class="stat" id="stTimeWrap" title="Total time until the search finished"><div class="label">Search time</div><div class="value" id="stTime">–</div></div>
       </div>
     </div>
 
@@ -1074,6 +1075,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     lastBalance = null; $("stBalance").textContent = "–";
     pollBalance(); // wallet cash shows immediately rather than on the next interval
     const notes = [];
+    const tStart = performance.now();
+    let tFirst = null;
+    $("stTime").textContent = "–";
 
     try{
       // Everything runs concurrently: all wallets at once, and per wallet the
@@ -1082,6 +1086,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       // later arrivals merge in live, instead of blocking behind the slowest
       // fetch (the explorer scan can take 15s+ on busy wallets).
       const progressiveRender = () => {
+        if(tFirst === null) tFirst = performance.now() - tStart;
         allRecords.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
         renderAll();
       };
@@ -1163,7 +1168,16 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       fetching = false;
       $("submitBtn").disabled = false;
       $("progressBox").classList.remove("active");
+      $("stTime").textContent = fmtDur(performance.now() - tStart);
+      $("stTimeWrap").title = "Total time until the search finished"
+        + (tFirst !== null ? " — first results were visible in " + fmtDur(tFirst) : "");
     }
+  }
+  // adaptive duration: sub-second in ms, then seconds with sensible precision
+  function fmtDur(ms){
+    if(ms < 1000) return Math.round(ms) + " ms";
+    if(ms < 10000) return (ms/1000).toFixed(2) + " s";
+    return (ms/1000).toFixed(1) + " s";
   }
 
   // ---------- rendering ----------
