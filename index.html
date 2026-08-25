@@ -172,12 +172,16 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
    The area only shows while one of its views is active. */
 .table-area{display:none; align-items:stretch; gap:8px;}
 .table-area:has(.table-wrap.active), .table-area:has(.json-wrap.active){display:flex;}
-.table-area .table-main{flex:1 1 auto; min-width:0;}
+/* the active view stretches to at least the Columns sidebar's height, so a
+   near-empty table never leaves the sidebar hanging below it */
+.table-area .table-main{flex:1 1 auto; min-width:0; display:flex; flex-direction:column;}
+.table-area .table-main > .active{flex:1 1 auto;}
 .side-bar{display:flex; align-items:stretch; flex:0 0 auto;}
 .side-panel{width:0; overflow:hidden; border:1px solid var(--border); border-right:none; background:var(--card); transition:width .15s ease;}
 .side-bar.open .side-panel{width:220px;}
 .sp-inner{position:sticky; top:8px; width:220px; box-sizing:border-box; padding:14px; display:flex; flex-direction:column; gap:8px;}
 .sp-title{font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted-foreground);}
+.sp-reset{margin-top:8px; align-self:flex-start; font-size:12px; height:28px; padding:0 10px; border-radius:999px;}
 .side-tabs{border:1px solid var(--border); background:var(--card); flex:0 0 auto;}
 .side-tab{
   position:sticky; top:8px; writing-mode:vertical-rl;
@@ -583,6 +587,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <div class="sp-inner">
           <div class="sp-title">Columns</div>
           <div id="colsList" class="cols-list"></div>
+          <button type="button" class="btn btn-ghost sp-reset" id="colsReset" title="Restore this view's default column order and visibility">Reset columns</button>
         </div>
       </div>
       <div class="side-tabs">
@@ -1018,6 +1023,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     errBox.textContent = "";
     if(invalid.length) errBox.textContent = "Skipping invalid address" + (invalid.length>1?"es":"") + ": " + invalid.slice(0,3).join(", ") + (invalid.length>3?" …":"");
     if(!valid.length){ errBox.textContent = "Enter at least one valid 0x address (40 hex characters)."; return; }
+    resetFilters({keepRows:true}); // a new search starts with clean search + filters (columns persist)
 
     // build shared params — only the time range is applied at fetch time;
     // everything else filters client-side after the data is in
@@ -2139,6 +2145,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(e.target.checked) cfg.hidden.delete(i); else cfg.hidden.add(i);
     cfgApplyHidden(cfg);
   });
+  $("colsReset").addEventListener("click", ()=>{
+    const cfg = activeColsCfg();
+    cfg.order = cfg.colNames.map((_, i) => i);
+    cfg.hidden = new Set();
+    cfgApplyOrder(cfg);
+  });
   // drag one row of the list onto another to reorder (top/bottom half = above/below)
   let dragPos = null;
   const colsListEl = $("colsList");
@@ -2353,16 +2365,21 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   $("sideSel").addEventListener("change", refreshResults);
 
   // reset every client-side filter
-  $("resetBtn").addEventListener("click", ()=>{
+  // shared by the Reset button and every new search (a new address starts clean;
+  // rows-per-page is a display preference and survives new searches)
+  function resetFilters(opts){
     $("typeSel").value = ""; $("sideSel").value = "";
     $("dateFrom").value = ""; $("dateTo").value = "";
     $("searchBox").value = "";
-    $("rowsSel").value = "100"; pageSize = 100;
+    if(!opts || !opts.keepRows){ $("rowsSel").value = "100"; pageSize = 100; }
     marketFilter = null; renderChips();
     catFilter = new Set();
     updateFchips();
     posStatusFilter = new Set(["open"]); // Open is the default status selection
     document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.toggle("on", b.dataset.pstat === "open"));
+  }
+  $("resetBtn").addEventListener("click", ()=>{
+    resetFilters();
     refreshResults();
     renderPositions(); // clearing searchBox programmatically fires no input event
   });
