@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Polymarket Activity Checker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<!-- warm the API connections before the first search: saves the DNS+TLS handshake -->
+<link rel="preconnect" href="https://data-api.polymarket.com" crossorigin>
+<link rel="preconnect" href="https://gamma-api.polymarket.com" crossorigin>
+<link rel="preconnect" href="https://clob.polymarket.com" crossorigin>
+<link rel="preconnect" href="https://polygon.blockscout.com" crossorigin>
+<link rel="preconnect" href="https://polygon-bor-rpc.publicnode.com" crossorigin>
+<link rel="preconnect" href="https://user-pnl-api.polymarket.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Vercel Web Analytics: cookieless unique-visitor counting (hashed IP+UA, raw IPs never stored).
      No-op until Web Analytics is enabled for the project in the Vercel dashboard. -->
@@ -729,23 +736,27 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     for(;;){
       const base = {user:addr, limit:String(PAGE_SIZE), ...params};
       if(endCursor) base.end = String(endCursor);
-      const pages = await Promise.allSettled(
-        Array.from({length: MAX_PAGES_PER_WALLET}, (_, p) =>
-          fetchWithRetry(API + "?" + new URLSearchParams({...base, offset:String(p*PAGE_SIZE)}).toString())
-            .then(async res => {
-              if(!res.ok){
-                let msg = "HTTP " + res.status;
-                try{ const j = await res.json(); if(j && j.error) msg += ": " + j.error; }catch(e){}
-                throw new Error(msg);
-              }
-              return res.json();
-            })));
-      // consume in page order; a failed page invalidates everything after it
+      // all pages fire concurrently; failures resolve to {__err} so no page is an
+      // unhandled rejection while results are consumed strictly in page order
+      const pages = Array.from({length: MAX_PAGES_PER_WALLET}, (_, p) =>
+        fetchWithRetry(API + "?" + new URLSearchParams({...base, offset:String(p*PAGE_SIZE)}).toString())
+          .then(async res => {
+            if(!res.ok){
+              let msg = "HTTP " + res.status;
+              try{ const j = await res.json(); if(j && j.error) msg += ": " + j.error; }catch(e){}
+              throw new Error(msg);
+            }
+            return res.json();
+          })
+          .catch(e => ({__err: (e && e.message) || "request failed"})));
+      // consume in page order; a failed page invalidates everything after it.
+      // The first page renders as soon as it lands — that IS the first paint,
+      // instead of waiting for the whole burst's slowest page.
       let windowDone = false, failed = null;
       const added = [];
-      for(const p of pages){
-        if(p.status === "rejected"){ failed = (p.reason && p.reason.message) || "request failed"; break; }
-        const rows = p.value;
+      for(let pi = 0; pi < pages.length; pi++){
+        const rows = await pages[pi];
+        if(rows && rows.__err){ failed = rows.__err; break; }
         pagesFetched++; totalPages++;
         if(Array.isArray(rows)){
           for(const r of rows){
@@ -755,10 +766,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             out.push(r); added.push(r);
           }
         }
+        onPage(addr, totalPages, out.length);
+        if(pi === 0 && added.length && onChunk) onChunk(added.splice(0));
         if(!Array.isArray(rows) || rows.length < PAGE_SIZE){ windowDone = true; break; }
       }
       onPage(addr, totalPages, out.length);
-      if(added.length && onChunk) onChunk(added);
+      if(added.length && onChunk) onChunk(added.splice(0));
       if(failed){
         if(!out.length) throw new Error(failed);
         // mid-pagination failure: keep what we have, note it
@@ -1410,11 +1423,15 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // from the product of the legs' current prices (the YES side of a parlay).
   function mapComboPosition(c){
     const legs = c.legs || [];
-    // the combos endpoint already carries each leg's market title — prime the
-    // tooltip's title cache so leg names render without any extra fetch
+    // per-leg display name: the EVENT title carries the matchup ("Real Madrid vs
+    // Juventus"); the market title is often just the bet type ("O/U 1.5") — show
+    // both. Primed into the tooltip's title cache so hovers need no extra fetch.
+    const legName = l => {
+      const m = l.market || {}, ev = m.event || {};
+      return [ev.event_title, m.title].filter(Boolean).join(" — ") || l.leg_outcome_label || "?";
+    };
     legs.forEach(l => {
-      if(l.leg_condition_id && l.market && l.market.title)
-        titleCache.set(l.leg_condition_id.toLowerCase(), l.market.title);
+      if(l.leg_condition_id) titleCache.set(l.leg_condition_id.toLowerCase(), legName(l));
     });
     const st = String(c.status || "");
     const est = legs.reduce((m,l) => m * (Number(l.leg_current_price) || 0), 1);
@@ -1430,7 +1447,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       cashPnl: pnl, percentPnl: initial ? pnl / initial * 100 : 0,
       redeemable: !!c.redeemable, isCombo: true, legs,
       posStatus: /LOSS/.test(st) ? "loss" : /WIN/.test(st) ? "won" : "open",
-      title: legs.map(l => (l.market && l.market.outcome) || l.leg_outcome_label || "?").join(" + "),
+      title: legs.map(l => {
+        const m = l.market || {}, ev = m.event || {};
+        return ev.event_title || m.title || l.leg_outcome_label || "?";
+      }).join(" + "),
       outcome: c.side || "",
       icon: (legs[0] && legs[0].market && legs[0].market.icon_url) || "",
       slug: legs.map(l => (l.market && l.market.slug) || "").join(" "),
@@ -1446,42 +1466,35 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // per-wallet errors keep the other wallets' positions instead of failing the lot
     const results = await Promise.all(currentWallets.map(async addr => {
       try{
-        const singlesP = (async () => {
+        // both endpoints paginate by known offsets, so all pages fire at once and
+        // results are consumed in order — one round-trip instead of a chain
+        const pagedFetch = async (urlFor, extract) => {
+          const reqs = Array.from({length: POS_MAX_PAGES}, (_, page) =>
+            fetchWithRetry(urlFor(page), 3, 15000)
+              .then(async res => { if(!res.ok) throw new Error("HTTP " + res.status); return extract(await res.json()); })
+              .catch(e => ({__err: e})));
           const out = [];
           let truncated = false;
-          for(let page=0; page<POS_MAX_PAGES; page++){
-            const qs = new URLSearchParams({user:addr, limit:"500", offset:String(page*500), sizeThreshold:"1"});
-            const res = await fetchWithRetry("https://data-api.polymarket.com/positions?" + qs.toString(), 3, 15000);
-            if(!res.ok) throw new Error("HTTP " + res.status);
-            const rows = await res.json();
+          for(let page = 0; page < reqs.length; page++){
+            const rows = await reqs[page];
+            if(rows && rows.__err) throw rows.__err;
             if(!Array.isArray(rows)) break;
             out.push(...rows);
             if(rows.length < 500) break;
             if(page === POS_MAX_PAGES - 1) truncated = true;
           }
           return {out, truncated};
-        })();
+        };
+        const singlesP = pagedFetch(
+          page => "https://data-api.polymarket.com/positions?" + new URLSearchParams({user:addr, limit:"500", offset:String(page*500), sizeThreshold:"1"}).toString(),
+          j => j);
         // the combos endpoint defaults to 20 rows — paginate it like the singles,
         // or open combos beyond the first page silently vanish
-        const combosP = (async () => {
-          try{
-            const out = [];
-            let truncated = false;
-            for(let page=0; page<POS_MAX_PAGES; page++){
-              const qs = new URLSearchParams({user:addr, limit:"500", offset:String(page*500)});
-              const res = await fetchWithRetry("https://data-api.polymarket.com/v1/positions/combos?" + qs.toString(), 3, 15000);
-              if(!res.ok) throw new Error("HTTP " + res.status);
-              const j = await res.json();
-              const rows = Array.isArray(j.combos) ? j.combos : [];
-              out.push(...rows);
-              if(rows.length < 500) break;
-              if(page === POS_MAX_PAGES - 1) truncated = true;
-            }
-            return {rows: out.filter(c => (Number(c.shares_balance) || 0) > 0).map(mapComboPosition), truncated};
-          }catch(e){
-            return {rows:[], truncated:false}; // combos are additive — their failure shouldn't sink the wallet
-          }
-        })();
+        const combosP = pagedFetch(
+          page => "https://data-api.polymarket.com/v1/positions/combos?" + new URLSearchParams({user:addr, limit:"500", offset:String(page*500)}).toString(),
+          j => Array.isArray(j.combos) ? j.combos : [])
+          .then(r => ({rows: r.out.filter(c => (Number(c.shares_balance) || 0) > 0).map(mapComboPosition), truncated: r.truncated}))
+          .catch(() => ({rows:[], truncated:false})); // combos are additive — their failure shouldn't sink the wallet
         const [singles, combos] = await Promise.all([singlesP, combosP]);
         return {ok:true, rows: singles.out.concat(combos.rows), truncated: singles.truncated || combos.truncated};
       }catch(e){
