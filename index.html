@@ -286,10 +286,13 @@ tr:last-child td{border-bottom:none;}
 tbody tr:hover{background:var(--muted);}
 td.num{font-variant-numeric:tabular-nums; text-align:right;}
 th.num{text-align:right;}
-.market-cell{display:flex; align-items:center; gap:8px; max-width:420px; cursor:help;}
+.market-cell{display:flex; align-items:center; gap:8px; max-width:420px; cursor:help; overflow:hidden;}
 .market-cell img{width:22px; height:22px; object-fit:cover; flex-shrink:0;}
-.market-cell a{color:var(--foreground); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+/* clip long titles with an ellipsis whether they're links or plain spans (combos) */
+.market-cell a, .market-cell > span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;}
+.market-cell a{color:var(--foreground); text-decoration:none;}
 .market-cell a:hover{color:var(--primary); text-decoration:underline;}
+.market-cell .badge{flex-shrink:0; overflow:visible;}
 
 /* floating tooltip */
 #tooltip{
@@ -302,6 +305,12 @@ th.num{text-align:right;}
 #tooltip ul.tt-list{margin:4px 0 0; padding-left:16px; list-style:disc;}
 #tooltip ul.tt-list li{margin:3px 0; white-space:normal;}
 #tooltip ul.tt-list li::marker{color:var(--muted-foreground);}
+/* resolved combo legs: the whole line takes the outcome color */
+#tooltip ul.tt-list li.leg-won{color:var(--success);}
+#tooltip ul.tt-list li.leg-won::marker{color:var(--success);}
+#tooltip ul.tt-list li.leg-lost{color:var(--destructive);}
+#tooltip ul.tt-list li.leg-lost::marker{color:var(--destructive);}
+#tooltip li.leg-won .tt-meta, #tooltip li.leg-lost .tt-meta{color:inherit; opacity:.75;}
 #tooltip .tt-sub{color:var(--muted-foreground); margin-bottom:4px;}
 #tooltip .tt-legs{margin-top:6px; border-top:1px solid var(--border); padding-top:6px; display:flex; flex-direction:column; gap:5px;}
 #tooltip .tt-leg{display:flex; gap:6px; align-items:baseline; white-space:normal;}
@@ -1876,9 +1885,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const won = st==="WON"||st==="RESOLVED_TRUE"||st==="RESOLVED_WIN";
       const lost = st==="LOST"||st==="RESOLVED_FALSE"||st==="RESOLVED_LOSS";
       const cls = won ? "won" : lost ? "lost" : "neutral";
-      const stLabel = won ? "WON" : lost ? "LOST" : st;
+      // resolved legs color the whole line (sportsbook bet-slip style) with a
+      // glyph so the state doesn't ride on color alone; open legs stay neutral
+      const stLabel = won ? "✓ WON" : lost ? "✗ LOST" : st;
       const px = l.leg_current_price != null ? ' <span class="tt-meta">'+Number(l.leg_current_price).toFixed(2)+"</span>" : "";
-      return '<li><span class="badge '+cls+'">'+esc(l.leg_outcome_label||"?")+"</span> "
+      return '<li class="leg-'+cls+'"><span class="badge '+cls+'">'+esc(l.leg_outcome_label||"?")+"</span> "
         + esc(name) + px + (stLabel?' <span class="tt-meta">'+esc(stLabel)+"</span>":"") + "</li>";
     }).join("") + "</ul>";
   }
