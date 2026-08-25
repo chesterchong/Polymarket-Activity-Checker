@@ -1971,12 +1971,28 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       ? '<div class="tt-title">Combo · ' + legs.length + ' legs</div>'
       : '<div class="tt-title">' + esc(p.title || "(untitled market)") + "</div>";
     const bits = [];
-    if(p.outcome) bits.push("Outcome: " + esc(p.outcome));
+    const isNo = String(p.outcome).toUpperCase() === "NO";
+    if(p.outcome) bits.push("Outcome: " + esc(p.outcome) + (legs ? (isNo ? " (against the combo)" : " (all legs must hit)") : ""));
     if(p.avgPrice != null) bits.push("avg @ " + Number(p.avgPrice).toFixed(3));
     if(p.curPrice != null) bits.push("now " + Number(p.curPrice).toFixed(3));
     bits.push(posStatus(p).toUpperCase());
     h += '<div class="tt-sub">' + bits.join(" · ") + "</div>";
-    if(legs) h += legsHtml(legs, splitComboTitle(p.title));
+    if(legs){
+      h += legsHtml(legs, splitComboTitle(p.title));
+      // leg colors show the LEGS' results; this line resolves them against the
+      // wallet's side, so a NO bet with all-green legs doesn't read as a paradox
+      const st = posStatus(p);
+      if(st === "loss")
+        h += '<div class="tt-meta">' + (isNo
+          ? "Every leg hit, so the combo resolved YES — this NO position lost."
+          : "A leg missed, so the combo resolved NO — this YES position lost.") + '</div>';
+      else if(st !== "open")
+        h += '<div class="tt-meta">' + (isNo
+          ? "A leg missed, so the combo resolved NO — this NO position won."
+          : "Every leg hit — this YES position won.") + '</div>';
+      else if(isNo)
+        h += '<div class="tt-meta">NO wins if at least one leg misses.</div>';
+    }
     return h;
   }
   function showPosTooltipFor(cell, x, y){
