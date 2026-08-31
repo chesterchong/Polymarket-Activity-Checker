@@ -547,9 +547,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         </div>
         <div class="fchips pos-only" role="group" aria-label="Position status">
           <button type="button" class="fchip on" data-pstat="open" title="Markets still in progress">Open <span class="cnt">0</span></button>
-          <button type="button" class="fchip" data-pstat="won" title="Resolved with profit, already settled">Won <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="notredeemed" title="Won but the payout has not been claimed yet">Not redeemed <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="redeemed" title="Payouts already claimed (from the wallet's redeem history) or auto-settled combo wins">Redeemed <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="loss" title="Resolved as a loss, or valued at $0">Loss <span class="cnt">0</span></button>
-          <button type="button" class="fchip" data-pstat="redeemable" title="Won but not yet redeemed">Redeemable <span class="cnt">0</span></button>
         </div>
         <span class="rb-group">
           <span class="date-range" title="Show records between these dates">
@@ -1538,7 +1538,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // ---------- positions tab (data-api /positions — independent of the activity feed) ----------
   let allPositions = [], posLoaded = false, posLoading = false, posRunSeq = 0;
   let posError = null, posTruncated = false, posFailedWallets = [], posRenderKey = null;
-  let posStatusFilter = new Set(["open"]); // of "open" | "won" | "loss" | "redeemable" — Open by default
+  let posStatusFilter = new Set(["open"]); // of "open" | "notredeemed" | "redeemed" | "loss" — Open by default
   let posRendered = []; // the rows currently in the DOM, for tooltip lookups
   const POS_MAX_PAGES = 4;   // 4 × 500 = 2,000 positions per wallet, surfaced in the note when hit
   const POS_VIEW_CAP = 1000; // DOM safety, like JSON_VIEW_CAP — the CSV still exports everything
@@ -1619,8 +1619,37 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           j => Array.isArray(j.combos) ? j.combos : [])
           .then(r => ({rows: r.out.filter(c => (Number(c.shares_balance) || 0) > 0).map(mapComboPosition), truncated: r.truncated}))
           .catch(() => ({rows:[], truncated:false})); // combos are additive — their failure shouldn't sink the wallet
-        const [singles, combos] = await Promise.all([singlesP, combosP]);
-        return {ok:true, rows: singles.out.concat(combos.rows), truncated: singles.truncated || combos.truncated};
+        // redeemed positions no longer exist in /positions (balance is zero) —
+        // synthesize them from the wallet's REDEEM activity, aggregated per market
+        const redeemsP = pagedFetch(
+          page => "https://data-api.polymarket.com/activity?" + new URLSearchParams({user:addr, type:"REDEEM", limit:"500", offset:String(page*500)}).toString(),
+          j => j)
+          .then(r => {
+            const byCond = new Map();
+            for(const rec of r.out){
+              const k = (rec.conditionId || rec.transactionHash || "").toLowerCase();
+              const g = byCond.get(k) || {size:0, payout:0, ts:0, rec};
+              g.size += Number(rec.size) || 0;
+              g.payout += Number(rec.usdcSize) || 0;
+              g.ts = Math.max(g.ts, rec.timestamp || 0);
+              byCond.set(k, g);
+            }
+            return {rows: [...byCond.values()].map(g => ({
+              proxyWallet: addr, asset: "", conditionId: g.rec.conditionId || "",
+              size: g.size, avgPrice: null,
+              curPrice: g.size ? g.payout / g.size : null,
+              initialValue: null, currentValue: 0, payout: g.payout,
+              cashPnl: null, percentPnl: NaN,
+              redeemable: false, isRedeemed: true,
+              title: g.rec.title || "", outcome: g.rec.outcome || "",
+              icon: g.rec.icon || "", slug: g.rec.slug || "", eventSlug: g.rec.eventSlug || "",
+              endDate: g.ts ? new Date(g.ts * 1000).toISOString().slice(0, 10) : ""
+            })), truncated: r.truncated};
+          })
+          .catch(() => ({rows:[], truncated:false})); // additive, like combos
+        const [singles, combos, redeems] = await Promise.all([singlesP, combosP, redeemsP]);
+        return {ok:true, rows: singles.out.concat(combos.rows, redeems.rows),
+          truncated: singles.truncated || combos.truncated || redeems.truncated};
       }catch(e){
         return {ok:false, addr, err:e.message};
       }
@@ -1654,22 +1683,27 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function visiblePositions(){
     let rows = basePositions();
     if(posStatusFilter.size) rows = rows.filter(p => posStatusFilter.has(posStatus(p)));
-    rows.sort((a,b)=>(Number(b.currentValue)||0)-(Number(a.currentValue)||0));
+    // redeemed rows have no current value — their payout is the comparable number
+    const valOf = p => p.isRedeemed ? (Number(p.payout)||0) : (Number(p.currentValue)||0);
+    rows.sort((a,b) => valOf(b) - valOf(a));
     return rows;
   }
   // status semantics:
-  //   loss       — resolved against the wallet, OR valued at $0 (regardless of flags)
-  //   redeemable — won but not yet redeemed
-  //   won        — resolved with profit and already settled (no redemption pending)
-  //   open       — market still in progress
+  //   loss        — resolved against the wallet, OR valued at $0 (regardless of flags)
+  //   notredeemed — won but the payout has not been claimed yet
+  //   redeemed    — payout already claimed (synthesized from REDEEM activity) or
+  //                 an auto-settled combo win
+  //   open        — market still in progress
+  const POS_STATUS_LABEL = {open:"OPEN", loss:"LOSS", redeemed:"REDEEMED", notredeemed:"NOT REDEEMED"};
   function posStatus(p){
+    if(p.isRedeemed) return "redeemed";
     const value = Number(p.currentValue) || 0;
     const resolvedLoss = p.isCombo ? p.posStatus === "loss"
       : (p.redeemable && (Number(p.curPrice)||0) < 0.5);
     if(resolvedLoss || value <= 0) return "loss";
     const resolvedWin = p.isCombo ? p.posStatus === "won"
       : (p.redeemable && (Number(p.curPrice)||0) >= 0.5);
-    if(resolvedWin) return p.redeemable ? "redeemable" : "won";
+    if(resolvedWin) return p.redeemable ? "notredeemed" : "redeemed";
     return "open";
   }
   function posRowHtml(p, idx){
@@ -1685,16 +1719,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       "<td>"+mkt+"</td>",
       '<td class="outcome">'+esc(p.outcome||"")+(function(){
         const st = posStatus(p);
-        return st === "redeemable" ? ' <span class="badge buy">REDEEMABLE</span>'
-          : st === "won" ? ' <span class="badge buy">WON</span>'
+        return st === "notredeemed" ? ' <span class="badge buy">NOT REDEEMED</span>'
+          : st === "redeemed" ? ' <span class="badge neutral">REDEEMED</span>'
           : st === "loss" ? ' <span class="badge sell">LOST</span>' : "";
       })()+"</td>",
       '<td class="num mono">'+fmtNum(p.size)+"</td>",
-      '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "")+"</td>",
-      '<td class="num mono">'+(p.curPrice!=null ? Number(p.curPrice).toFixed(3) : "")+"</td>",
-      '<td class="num mono">$'+fmtUsd(p.currentValue)+"</td>",
-      '<td class="num mono '+(pnl >= 0 ? "pos" : "neg")+'">'+(pnl < 0 ? "-$" : "$")+fmtUsd(Math.abs(pnl))
-        + (isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>",
+      '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "—")+"</td>",
+      '<td class="num mono">'+(p.curPrice!=null ? Number(p.curPrice).toFixed(3) : "—")+"</td>",
+      (p.isRedeemed
+        ? '<td class="num mono" title="Payout received at redemption">$'+fmtUsd(p.payout)+"</td>"
+        : '<td class="num mono">$'+fmtUsd(p.currentValue)+"</td>"),
+      (p.isRedeemed
+        ? '<td class="num mono">—</td>'
+        : '<td class="num mono '+(pnl >= 0 ? "pos" : "neg")+'">'+(pnl < 0 ? "-$" : "$")+fmtUsd(Math.abs(pnl))
+          + (isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>"),
       '<td class="mono">'+esc(p.endDate||"")+"</td>"
     ];
     return "<tr>" + posCols.order.map(i => cells[i]).join("") + "</tr>";
@@ -1709,7 +1747,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posRenderKey = key;
     // faceted chip counts: each family counts against the OTHER family's selection
     // (status counts respect Single/Combo; Single/Combo counts respect status)
-    const counts = {open:0, won:0, loss:0, redeemable:0};
+    const counts = {open:0, notredeemed:0, redeemed:0, loss:0};
     basePositions().forEach(p => counts[posStatus(p)]++);
     document.querySelectorAll(".fchip[data-pstat] .cnt").forEach(el =>
       el.textContent = (counts[el.parentElement.dataset.pstat] || 0).toLocaleString());
@@ -1738,10 +1776,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const val = rows.reduce((s,p)=>s+(Number(p.currentValue)||0),0);
       const pnl = rows.reduce((s,p)=>s+(Number(p.cashPnl)||0),0);
       const redeem = rows.filter(p=>p.redeemable).length;
+      const paid = rows.reduce((s,p)=>s+(Number(p.payout)||0),0);
       note = rows.length.toLocaleString() + " position" + (rows.length===1?"":"s")
         + " · current value $" + fmtUsd(val)
         + " · PnL " + (pnl < 0 ? "-$" : "$") + fmtUsd(Math.abs(pnl))
-        + (redeem ? " · " + redeem.toLocaleString() + " redeemable" : "");
+        + (paid ? " · redeemed $" + fmtUsd(paid) : "")
+        + (redeem ? " · " + redeem.toLocaleString() + " not redeemed" : "");
       if(posTruncated) note += " · limited to the first " + (POS_MAX_PAGES*500).toLocaleString() + " positions per wallet";
       if(rows.length > POS_VIEW_CAP) note += " · showing the top " + POS_VIEW_CAP.toLocaleString() + " by value — narrow the search or download the CSV for all";
     }
@@ -1893,9 +1933,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   setInterval(pollBalance, LIVE_MS);
 
   function positionsCsv(rows){
-    const cols = ["proxyWallet","title","outcome","size","avgPrice","curPrice","initialValue","currentValue","cashPnl","percentPnl","realizedPnl","redeemable","endDate","conditionId"];
+    const cols = ["proxyWallet","title","outcome","status","size","avgPrice","curPrice","initialValue","currentValue","payout","cashPnl","percentPnl","realizedPnl","endDate","conditionId"];
     // csvCell carries the spreadsheet formula-injection guard used by the activity CSV
-    return cols.join(",") + "\n" + rows.map(p => cols.map(c => csvCell(p[c])).join(",")).join("\n");
+    return cols.join(",") + "\n" + rows.map(p =>
+      cols.map(c => csvCell(c === "status" ? posStatus(p) : p[c])).join(",")).join("\n");
   }
 
   // pretty JSON with syntax highlighting (capped for DOM safety)
@@ -2089,8 +2130,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const isNo = String(p.outcome).toUpperCase() === "NO";
     if(p.outcome) bits.push("Outcome: " + esc(p.outcome) + (legs ? (isNo ? " (against the combo)" : " (all legs must hit)") : ""));
     if(p.avgPrice != null) bits.push("avg @ " + Number(p.avgPrice).toFixed(3));
-    if(p.curPrice != null) bits.push("now " + Number(p.curPrice).toFixed(3));
-    bits.push(posStatus(p).toUpperCase());
+    if(p.isRedeemed) bits.push("paid out $" + fmtUsd(p.payout));
+    else if(p.curPrice != null) bits.push("now " + Number(p.curPrice).toFixed(3));
+    bits.push(POS_STATUS_LABEL[posStatus(p)] || posStatus(p).toUpperCase());
     h += '<div class="tt-sub">' + bits.join(" · ") + "</div>";
     if(legs){
       h += legsHtml(legs, splitComboTitle(p.title));
