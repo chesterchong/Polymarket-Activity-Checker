@@ -327,7 +327,11 @@ th.num{text-align:right;}
 .badge.combo{background:rgba(22,93,252,.12); color:var(--primary);}
 .addr-link,.tx-link{color:var(--muted-foreground); text-decoration:none; font-size:12px;}
 .addr-link:hover,.tx-link:hover{color:var(--primary);}
-.time-cell{color:var(--muted-foreground); font-size:12px;}
+.time-cell{color:var(--muted-foreground); font-size:12px; cursor:copy;}
+.time-cell:hover{color:var(--foreground);}
+@keyframes copyFlash{0%{background:rgba(22,93,252,.30);}100%{background:transparent;}}
+.copy-flash{animation:copyFlash .8s ease-out;}
+@media (prefers-reduced-motion: reduce){ .copy-flash{animation:none;} }
 .outcome{color:var(--muted-foreground); font-size:12px;}
 
 /* json view */
@@ -1445,7 +1449,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       : "";
     // one cell per column, in original index order — emitted in the view's column order
     const cells = [
-      '<td class="time-cell mono">'+fmtTime(r.timestamp||0)+"</td>",
+      '<td class="time-cell mono" title="Click to copy">'+fmtTime(r.timestamp||0)+"</td>",
       '<td><a class="addr-link mono" href="https://polymarket.com/profile/'+esc(r.proxyWallet||"")+'" target="_blank" rel="noopener">'+esc(short(r.proxyWallet))+"</a></td>",
       "<td>"+typeBadge+"</td>",
       "<td>"+mkt+"</td>",
@@ -2401,16 +2405,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   });
 
   // copy Tx hash + clickable type/combo badges (event delegation)
-  async function copyText(text, btn){
-    let ok = false;
-    try{ await navigator.clipboard.writeText(text); ok = true; }
+  async function copyToClipboard(text){
+    try{ await navigator.clipboard.writeText(text); return true; }
     catch(e){
       const t = document.createElement("textarea");
       t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
       document.body.appendChild(t); t.select();
+      let ok = false;
       try{ ok = document.execCommand("copy"); }catch(_){}
       t.remove();
+      return ok;
     }
+  }
+  async function copyText(text, btn){
+    const ok = await copyToClipboard(text);
     btn.textContent = ok ? "✓" : "✕";
     btn.classList.toggle("ok", ok);
     setTimeout(()=>{ btn.textContent = "⧉"; btn.classList.remove("ok"); }, 1200);
@@ -2418,6 +2426,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   tbodyEl.addEventListener("click", e => {
     const cp = e.target.closest(".copy-btn");
     if(cp){ copyText(cp.dataset.tx, cp); return; }
+    const tc = e.target.closest(".time-cell");
+    if(tc){
+      copyToClipboard(tc.textContent.trim()).then(ok => {
+        if(!ok) return;
+        tc.classList.remove("copy-flash"); void tc.offsetWidth; tc.classList.add("copy-flash");
+      });
+      return;
+    }
     const bb = e.target.closest(".badge-btn");
     if(!bb) return;
     if(bb.dataset.fc){ setCatFilter(catFilter.has("combo") && catFilter.size === 1 ? new Set() : new Set(["combo"])); }
