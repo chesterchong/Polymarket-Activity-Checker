@@ -511,6 +511,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button class="tab" id="tabJson" role="tab">Json</button>
         </div>
         <span class="flex-spacer"></span>
+        <button class="btn" id="snapBtn" title="Copy a screenshot of the current results table to the clipboard">Snapshot</button>
         <button class="btn" id="dlBtn">Export</button>
         <select id="rowsSel" aria-label="Rows to display" title="Rows to display">
           <option value="25">25 rows</option>
@@ -2563,6 +2564,60 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
   // one download button whose format follows the active tab
   window.__pmacDebug = {fetchTransfersViaLogs, pollLivePrices}; // console access for diagnostics
+
+  // ---------- snapshot: render the active results table to a PNG on the clipboard ----------
+  function loadScript(src){
+    return new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = src; s.onload = res; s.onerror = () => rej(new Error("script failed to load"));
+      document.head.appendChild(s);
+    });
+  }
+  let snapBusy = false;
+  $("snapBtn").addEventListener("click", async ()=>{
+    if(snapBusy) return;
+    const wrap = ["tableWrap","posWrap","jsonWrap"].map(id => $(id)).find(el => el.classList.contains("active"));
+    if(!wrap){ return; }
+    const btn = $("snapBtn");
+    const restore = label => { btn.textContent = label; setTimeout(()=>{ btn.textContent = "Snapshot"; }, 1600); };
+    snapBusy = true;
+    btn.textContent = "…";
+    try{
+      if(!window.html2canvas) // lazy: the library only loads on first use
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js");
+      const fullW = wrap.scrollWidth, fullH = wrap.scrollHeight;
+      const canvas = await html2canvas(wrap, {
+        backgroundColor: getComputedStyle(document.body).backgroundColor,
+        useCORS: true, logging: false,
+        width: fullW, height: fullH,
+        windowWidth: Math.max(fullW + 40, document.documentElement.clientWidth),
+        scale: Math.min(2, 16000 / Math.max(fullW, fullH, 1)), // stay under canvas size limits
+        onclone: doc => {
+          const w = doc.getElementById(wrap.id);
+          w.style.overflow = "visible";  // capture the full scroll width, not the clipped view
+          w.style.width = fullW + "px";
+          w.style.maxHeight = "none";
+        }
+      });
+      const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+      if(!blob) throw new Error("render failed");
+      try{
+        await navigator.clipboard.write([new ClipboardItem({"image/png": blob})]);
+        restore("Copied ✓");
+      }catch(e){
+        // clipboard images blocked (browser/permission) — save the file instead
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "polymarket-snapshot.png"; a.click();
+        setTimeout(()=>URL.revokeObjectURL(url), 5000);
+        restore("Saved ↓");
+      }
+    }catch(e){
+      restore("Failed ✕");
+    }finally{
+      snapBusy = false;
+    }
+  });
 
   $("dlBtn").addEventListener("click", ()=>{
     if($("tabJson").classList.contains("on"))
