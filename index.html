@@ -288,6 +288,9 @@ tbody tr:hover{background:var(--muted);}
 td.num{font-variant-numeric:tabular-nums; text-align:right;}
 th.num{text-align:right;}
 .market-cell{display:flex; align-items:center; gap:8px; max-width:420px; cursor:help; overflow:hidden;}
+/* once columns are manually resized (fixed layout), the column width governs —
+   widening the Market column reveals more of the title instead of a fixed cap */
+table.resized .market-cell{max-width:none; width:100%; min-width:0;}
 .market-cell img{width:22px; height:22px; object-fit:cover; flex-shrink:0;}
 /* clip long titles with an ellipsis whether they're links or plain spans (combos) */
 .market-cell a, .market-cell > span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;}
