@@ -2588,7 +2588,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     try{
       if(!window.html2canvas) // lazy: the library only loads on first use
         await loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js");
-      const fullW = wrap.scrollWidth, fullH = wrap.scrollHeight;
+      const fullW = wrap.scrollWidth;
+      // capture only the records, not the flex-stretched empty space below them:
+      // content height = the visible children (table, notes, load-more), not the wrap
+      const contentH = [...wrap.children].reduce((s, el) => s + (el.offsetHeight || 0), 0) + 2;
+      const fullH = Math.max(40, Math.min(wrap.scrollHeight, contentH));
       const canvas = await html2canvas(wrap, {
         backgroundColor: getComputedStyle(document.body).backgroundColor,
         useCORS: true, logging: false,
@@ -2600,6 +2604,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           w.style.overflow = "visible";  // capture the full scroll width, not the clipped view
           w.style.width = fullW + "px";
           w.style.maxHeight = "none";
+          w.style.minHeight = "0";       // undo the sidebar-height flex stretch
+          w.style.flex = "0 0 auto";
+          w.style.height = fullH + "px";
         }
       });
       const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
