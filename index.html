@@ -749,10 +749,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       timeZone: TZ_IANA[tzSel]});
   };
   // UTC ms of a calendar day's start (or last ms) in the selected zone —
-  // iterate because the zone's offset at the guess can shift the wall clock
-  function zonedDayBound(dateStr, endOfDay){
-    const [y, m, d] = dateStr.split("-").map(Number);
-    if(!y || !m || !d) return null;
+  // iterate because the zone's offset at the guess can shift the wall clock.
+  // End-of-day is 1ms before the NEXT day's midnight, not midnight + 24h:
+  // DST switch days in ET are 23 or 25 hours long.
+  function zonedMidnight(y, m, d){
     const base = Date.UTC(y, m-1, d);
     const dtf = new Intl.DateTimeFormat("en-US", {timeZone: TZ_IANA[tzSel], hour12: false,
       year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit"});
@@ -762,7 +762,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const asUtc = Date.UTC(+p.year, p.month-1, +p.day, p.hour%24, +p.minute, +p.second);
       guess += base - asUtc;
     }
-    return guess + (endOfDay ? 86399999 : 0);
+    return guess;
+  }
+  function zonedDayBound(dateStr, endOfDay){
+    const [y, m, d] = dateStr.split("-").map(Number);
+    if(!y || !m || !d) return null;
+    return endOfDay ? zonedMidnight(y, m, d+1) - 1 : zonedMidnight(y, m, d);
   }
 
   function parseAddresses(raw){
