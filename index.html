@@ -585,6 +585,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             <span class="dr-sep">–</span>
             <input type="date" id="dateTo" aria-label="To date">
           </span>
+          <span class="seg" id="tzSeg" role="group" aria-label="Time zone" title="Time zone for the Time column and the date filter">
+            <button type="button" class="seg-btn" data-tz="ET" title="US Eastern time">ET</button>
+            <button type="button" class="seg-btn" data-tz="GMT+8" title="Singapore / Malaysia time">GMT+8</button>
+          </span>
           <span class="search-wrap">
             <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
             <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
@@ -734,12 +738,32 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   const short = a => a ? a.slice(0,6) + "…" + a.slice(-4) : "";
   const fmtUsd = n => Number(n||0).toLocaleString("en-US",{maximumFractionDigits:2, minimumFractionDigits:2});
   const fmtNum = n => Number(n||0).toLocaleString("en-US",{maximumFractionDigits:4});
-  // all timestamps display in US Eastern time (Polymarket's house convention)
+  // timestamps display in the user-chosen zone: ET (Polymarket's house
+  // convention, DST-aware) or GMT+8. The same zone governs the date filter.
+  const TZ_KEY = "pmac_tz";
+  const TZ_IANA = {"ET": "America/New_York", "GMT+8": "Asia/Singapore"};
+  let tzSel = localStorage.getItem(TZ_KEY) === "GMT+8" ? "GMT+8" : "ET";
   const fmtTime = ts => {
     const d = new Date(ts*1000);
     return d.toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",
-      timeZone:"America/New_York"});
+      timeZone: TZ_IANA[tzSel]});
   };
+  // UTC ms of a calendar day's start (or last ms) in the selected zone —
+  // iterate because the zone's offset at the guess can shift the wall clock
+  function zonedDayBound(dateStr, endOfDay){
+    const [y, m, d] = dateStr.split("-").map(Number);
+    if(!y || !m || !d) return null;
+    const base = Date.UTC(y, m-1, d);
+    const dtf = new Intl.DateTimeFormat("en-US", {timeZone: TZ_IANA[tzSel], hour12: false,
+      year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit"});
+    let guess = base;
+    for(let i = 0; i < 2; i++){
+      const p = Object.fromEntries(dtf.formatToParts(new Date(guess)).map(x => [x.type, x.value]));
+      const asUtc = Date.UTC(+p.year, p.month-1, +p.day, p.hour%24, +p.minute, +p.second);
+      guess += base - asUtc;
+    }
+    return guess + (endOfDay ? 86399999 : 0);
+  }
 
   function parseAddresses(raw){
     const parts = raw.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean);
@@ -1362,8 +1386,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function dateBound(id, endOfDay){
     const v = $(id).value;
     if(!v) return null;
-    const t = new Date(v + (endOfDay ? "T23:59:59.999" : "T00:00:00")).getTime();
-    return isNaN(t) ? null : Math.floor(t/1000);
+    const t = zonedDayBound(v, endOfDay); // interpreted in the selected zone (ET / GMT+8)
+    return t == null || isNaN(t) ? null : Math.floor(t/1000);
   }
 
   function applySearch(){
@@ -2293,7 +2317,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(sellUs || sellSh) sum.push("sold <b>" + fmtNum(sellSh) + "</b> shares for <b>$" + fmtUsd(sellUs) + "</b>");
     if(redUs) sum.push("redeemed <b>$" + fmtUsd(redUs) + "</b>");
     return '<div class="pos-hist"><table><thead><tr>'
-      + "<th>Time (ET)</th><th>Type</th><th>Outcome</th>"
+      + "<th>Time ("+esc(tzSel)+")</th><th>Type</th><th>Outcome</th>"
       + '<th class="num">Shares</th><th class="num">Price</th><th class="num">Amount</th><th>Tx</th>'
       + "</tr></thead><tbody>" + body + "</tbody></table>"
       + '<div class="pos-hist-sum">' + rows.length.toLocaleString() + " record" + (rows.length===1?"":"s")
@@ -2463,6 +2487,23 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // date range + rows-per-page + Time sort
   $("dateFrom").addEventListener("change", refreshResults);
   $("dateTo").addEventListener("change", refreshResults);
+  // time-zone toggle: relabels the Time headers and re-renders every timestamp
+  // (activity rows, open trade-history panels) plus the date-filter bounds
+  function applyTz(){
+    document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.tz === tzSel));
+    $("thTime").innerHTML = "Time (" + esc(tzSel) + ') <span id="sortArrow">' + (sortDir === "desc" ? "▼" : "▲") + "</span>";
+    actCols.colNames[0] = "Time (" + tzSel + ")";
+    buildColsList();
+  }
+  document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.addEventListener("click", ()=>{
+    if(b.dataset.tz === tzSel) return;
+    tzSel = b.dataset.tz;
+    try{ localStorage.setItem(TZ_KEY, tzSel); }catch(e){}
+    applyTz();
+    refreshResults();
+    posRenderKey = null;
+    renderPositions();
+  }));
   $("rowsSel").addEventListener("change", ()=>{
     pageSize = Number($("rowsSel").value) || 100;
     if(allRecords.length && !$("tabJson").classList.contains("on")) renderTableChunk(true);
@@ -2581,6 +2622,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   });
   cfgApplyOrder(actCols);
   cfgApplyOrder(posCols);
+  applyTz(); // restore the saved time zone's labels + toggle state
 
   // active-filter chip for badge-click market filters
   function renderChips(){
