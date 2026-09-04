@@ -337,6 +337,25 @@ table.resized .market-cell{max-width:none; width:100%; min-width:0;}
 @media (prefers-reduced-motion: reduce){ .copy-flash{animation:none;} }
 .outcome{color:var(--muted-foreground); font-size:12px;}
 
+/* expandable position rows: click a row to reveal that market's full trade history */
+#posWrap tbody tr.pos-row td{cursor:pointer;}
+.pos-caret{display:inline-block; flex-shrink:0; width:11px; color:var(--muted-foreground); font-size:10px; transition:transform .15s ease;}
+tr.pos-row.expanded .pos-caret{transform:rotate(90deg);}
+@media (prefers-reduced-motion: reduce){ .pos-caret{transition:none;} }
+/* the detail cell spans every column — exempt it (and the sub-table's own cells)
+   from the per-column nth-child hiding and from row-hover tinting */
+tr.pos-detail>td{display:table-cell !important; padding:0 !important; cursor:default;}
+tbody tr.pos-detail:hover{background:transparent;}
+.pos-hist{padding:10px 16px 14px 39px; background:var(--muted);}
+.pos-hist-note{color:var(--muted-foreground); font-size:12px; padding:10px 16px 10px 39px; background:var(--muted); white-space:normal;}
+.pos-hist table{width:auto; min-width:560px; font-size:12.5px;}
+.pos-hist th, .pos-hist td{display:table-cell !important; padding:5px 16px 5px 0; border-right:none; background:transparent;}
+.pos-hist th{position:static; font-size:10.5px;}
+.pos-hist tr:hover{background:transparent;}
+.pos-hist tr:last-child td{border-bottom:none;}
+.pos-hist-sum{color:var(--muted-foreground); font-size:12px; margin-top:9px;}
+.pos-hist-sum b{color:var(--foreground); font-weight:500;}
+
 /* json view */
 .json-wrap{display:none; border:1px solid var(--border); background:var(--card); max-height:70vh; overflow:auto;}
 .json-wrap.active{display:block;}
@@ -1717,7 +1736,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function posRowHtml(p, idx){
     const pnl = Number(p.cashPnl)||0;
     const pct = Number(p.percentPnl);
-    const mkt = '<div class="market-cell" data-pi="'+idx+'">' + (p.icon ? '<img src="'+esc(p.icon)+'" alt="" loading="lazy">' : "")
+    const mkt = '<div class="market-cell" data-pi="'+idx+'"><span class="pos-caret">▶</span>' + (p.icon ? '<img src="'+esc(p.icon)+'" alt="" loading="lazy">' : "")
       + (p.isCombo
         ? '<span>'+esc(p.title||"—")+'</span> <span class="badge combo">COMBO</span>'
         : '<a href="https://polymarket.com/event/'+esc(p.eventSlug||p.slug||"")+'" target="_blank" rel="noopener">'+esc(p.title||"—")+'</a>')
@@ -1743,7 +1762,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           + (isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>"),
       '<td class="mono">'+esc(p.endDate||"")+"</td>"
     ];
-    return "<tr>" + posCols.order.map(i => cells[i]).join("") + "</tr>";
+    return '<tr class="pos-row'+(expandedPos.has(posKey(p))?" expanded":"")+'" data-pi="'+idx+'">'
+      + posCols.order.map(i => cells[i]).join("") + "</tr>";
   }
   function renderPositions(){
     if(!$("posWrap").classList.contains("active")) return;
@@ -1771,6 +1791,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
     hideTooltip(); // rows are being replaced under any open tooltip
     $("posBody").innerHTML = posRendered.map((p, i) => posRowHtml(p, i)).join("");
+    // re-open detail rows the user had expanded before this re-render
+    if(expandedPos.size)
+      [...$("posBody").children].forEach(tr => {
+        const p = tr.classList.contains("pos-row") ? posRendered[Number(tr.dataset.pi)] : null;
+        if(p && expandedPos.has(posKey(p))) expandPosRow(tr, p);
+      });
     // grab-cursor affordance when the positions table overflows sideways
     $("posWrap").classList.toggle("grabbable", $("posWrap").scrollWidth > $("posWrap").clientWidth);
   }
@@ -1876,10 +1902,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const body = $("posBody");
     // original column indices: 5 = Cur price, 6 = Value, 7 = PnL
     const curPos = posCols.order.indexOf(5), valPos = posCols.order.indexOf(6), pnlPos = posCols.order.indexOf(7);
+    // expanded detail rows sit between position rows — address rows by data-pi, not child index
+    const rowByPi = new Map();
+    for(const tr of body.children)
+      if(tr.classList.contains("pos-row")) rowByPi.set(Number(tr.dataset.pi), tr);
     posRendered.forEach((p, i) => {
       const ch = changed.get(p);
       if(!ch) return;
-      const row = body.children[i];
+      const row = rowByPi.get(i);
       if(!row) return;
       const cur = row.cells[curPos], val = row.cells[valPos], pnlTd = row.cells[pnlPos];
       if(cur) tweenCell(cur, ch.oldPx, Number(p.curPrice), v => v.toFixed(3) + tickArrow(ch.dir), ch.dir);
@@ -2167,6 +2197,160 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     tooltip.innerHTML = posTooltipHtml(p);
     positionTooltip(x, y);
   }
+
+  // ---------- expandable position rows: the market's full trade history ----------
+  // Clicking a position row inserts a detail row underneath with every touch the
+  // wallet had on that market — buys, sells, redeems, splits/merges, rewards —
+  // each with its tx hash. Singles come from /activity?market=<conditionId>
+  // (all types, offset-paged); combos from /v1/activity/combos matched by id.
+  const posHistCache = new Map(); // wallet|conditionId -> promise | rows
+  const expandedPos = new Set();  // posKey() of rows the user has open
+  const POS_HIST_CAP = 300;
+  const posKey = p => ((p.proxyWallet||"") + "|" + (p.conditionId || p.asset || p.title || "")).toLowerCase();
+
+  async function fetchPosHistory(p){
+    const key = posKey(p);
+    if(posHistCache.has(key)) return posHistCache.get(key);
+    const prom = (async () => {
+      if(p.isCombo){
+        const qs = new URLSearchParams({user: p.proxyWallet, market_id: p.conditionId, limit: "500"});
+        let res = await fetch("https://data-api.polymarket.com/v1/activity/combos?" + qs,
+          {signal: AbortSignal.timeout(15000)});
+        if(!res.ok) // param-name fallback: fetch by user only, match client-side
+          res = await fetch("https://data-api.polymarket.com/v1/activity/combos?"
+            + new URLSearchParams({user: p.proxyWallet, limit: "500"}), {signal: AbortSignal.timeout(15000)});
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        const j = await res.json();
+        return (Array.isArray(j) ? j : (j.activity || []))
+          .filter(a => (a.combo_condition_id||"").toLowerCase() === (p.conditionId||"").toLowerCase())
+          .map(a => ({
+            timestamp: a.timestamp, type: a.type || "", side: a.side || "", outcome: "",
+            size: null, price: null,
+            usdc: a.payout_usdc != null ? Number(a.payout_usdc) : (Number(a.amount_usdc) || 0),
+            tx: a.tx_hash || ""
+          }))
+          .sort((x, y) => (y.timestamp||0) - (x.timestamp||0));
+      }
+      const out = [];
+      for(let offset = 0; offset <= 4500; offset += 500){
+        const qs = new URLSearchParams({user: p.proxyWallet, market: p.conditionId,
+          limit: "500", offset: String(offset)});
+        const res = await fetch("https://data-api.polymarket.com/activity?" + qs,
+          {signal: AbortSignal.timeout(15000)});
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        const rows = await res.json();
+        if(!Array.isArray(rows)) break;
+        out.push(...rows);
+        if(rows.length < 500) break;
+      }
+      return out.map(a => ({
+        timestamp: a.timestamp, type: a.type || "", side: a.side || "",
+        outcome: a.outcome || "", size: Number(a.size) || 0,
+        price: a.price != null ? Number(a.price) : null,
+        usdc: Number(a.usdcSize) || 0, tx: a.transactionHash || ""
+      })).sort((x, y) => (y.timestamp||0) - (x.timestamp||0));
+    })();
+    posHistCache.set(key, prom);
+    try{ const rows = await prom; posHistCache.set(key, rows); return rows; }
+    catch(e){ posHistCache.delete(key); throw e; }
+  }
+
+  function posHistHtml(rows, p){
+    if(!rows.length)
+      return '<div class="pos-hist-note">No activity found for this market — it may predate the feed.</div>';
+    let buySh = 0, buyUs = 0, sellSh = 0, sellUs = 0, redUs = 0;
+    for(const r of rows){
+      const s = String(r.side).toUpperCase(), t = String(r.type).toUpperCase();
+      if(s === "BUY"){ buySh += r.size||0; buyUs += r.usdc; }
+      else if(s === "SELL"){ sellSh += r.size||0; sellUs += r.usdc; }
+      else if(t === "REDEEM") redUs += r.usdc;
+    }
+    const badge = r => {
+      const s = String(r.side).toUpperCase(), t = String(r.type).toUpperCase();
+      const label = t === "TRADE" ? s : (t || s);
+      const cls = s === "BUY" ? "buy" : s === "SELL" ? "sell" : "neutral";
+      return '<span class="badge ' + cls + '">' + esc(label || "?") + "</span>";
+    };
+    const body = rows.slice(0, POS_HIST_CAP).map(r => {
+      const tx = r.tx
+        ? '<a class="tx-link mono" href="https://polygonscan.com/tx/'+esc(r.tx)+'" target="_blank" rel="noopener">'+esc(r.tx.slice(0,10))+'…</a>'
+          + '<button type="button" class="copy-btn" data-tx="'+esc(r.tx)+'" title="Copy full transaction hash" aria-label="Copy full transaction hash">⧉</button>'
+        : "";
+      return "<tr>"
+        + '<td class="time-cell mono" title="Click to copy">'+fmtTime(r.timestamp||0)+"</td>"
+        + "<td>"+badge(r)+"</td>"
+        + '<td class="outcome">'+esc(r.outcome||"")+"</td>"
+        + '<td class="num mono">'+(r.size ? fmtNum(r.size) : "—")+"</td>"
+        + '<td class="num mono">'+(r.price ? Number(r.price).toFixed(3) : "—")+"</td>"
+        + '<td class="num mono">$'+fmtUsd(r.usdc)+"</td>"
+        + "<td>"+tx+"</td>"
+        + "</tr>";
+    }).join("");
+    const sum = [];
+    if(buyUs || buySh) sum.push("bought <b>" + fmtNum(buySh) + "</b> shares for <b>$" + fmtUsd(buyUs) + "</b>");
+    if(sellUs || sellSh) sum.push("sold <b>" + fmtNum(sellSh) + "</b> shares for <b>$" + fmtUsd(sellUs) + "</b>");
+    if(redUs) sum.push("redeemed <b>$" + fmtUsd(redUs) + "</b>");
+    return '<div class="pos-hist"><table><thead><tr>'
+      + "<th>Time</th><th>Type</th><th>Outcome</th>"
+      + '<th class="num">Shares</th><th class="num">Price</th><th class="num">Amount</th><th>Tx</th>'
+      + "</tr></thead><tbody>" + body + "</tbody></table>"
+      + '<div class="pos-hist-sum">' + rows.length.toLocaleString() + " record" + (rows.length===1?"":"s")
+      + (rows.length > POS_HIST_CAP ? " · showing the latest " + POS_HIST_CAP : "")
+      + (sum.length ? " · " + sum.join(" · ") : "") + "</div></div>";
+  }
+
+  function posDetailTd(tr){
+    let d = tr.nextElementSibling;
+    if(!d || !d.classList.contains("pos-detail")){
+      d = document.createElement("tr");
+      d.className = "pos-detail";
+      d.innerHTML = '<td colspan="' + posCols.colNames.length + '"></td>';
+      tr.after(d);
+    }
+    return d.firstElementChild;
+  }
+  async function expandPosRow(tr, p){
+    tr.classList.add("expanded");
+    const td = posDetailTd(tr);
+    td.innerHTML = '<div class="pos-hist-note">Loading trade history…</div>';
+    try{
+      const rows = await fetchPosHistory(p);
+      if(!tr.isConnected) return; // the table re-rendered while we were fetching
+      td.innerHTML = posHistHtml(rows, p);
+    }catch(e){
+      if(!tr.isConnected) return;
+      td.innerHTML = '<div class="pos-hist-note">Couldn’t load the trade history ('
+        + esc(e.message) + ") — collapse and re-open the row to retry.</div>";
+    }
+  }
+  $("posBody").addEventListener("click", e => {
+    const cp = e.target.closest(".copy-btn");
+    if(cp){ copyText(cp.dataset.tx, cp); return; }
+    const tc = e.target.closest(".time-cell");
+    if(tc){
+      copyToClipboard(tc.textContent.trim()).then(ok => {
+        if(!ok) return;
+        tc.classList.remove("copy-flash"); void tc.offsetWidth; tc.classList.add("copy-flash");
+      });
+      return;
+    }
+    if(e.target.closest("a, button")) return; // links and buttons keep their own action
+    const tr = e.target.closest("tr.pos-row");
+    if(!tr) return;
+    const p = posRendered[Number(tr.dataset.pi)];
+    if(!p) return;
+    hideTooltip();
+    const key = posKey(p);
+    if(expandedPos.has(key)){
+      expandedPos.delete(key);
+      tr.classList.remove("expanded");
+      const d = tr.nextElementSibling;
+      if(d && d.classList.contains("pos-detail")) d.remove();
+    }else{
+      expandedPos.add(key);
+      expandPosRow(tr, p);
+    }
+  });
 
   function wireTooltip(bodyEl, show){
     bodyEl.addEventListener("mouseover", e => {
