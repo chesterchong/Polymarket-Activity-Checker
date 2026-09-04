@@ -615,7 +615,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <table>
         <thead>
           <tr>
-            <th class="sortable" id="thTime" title="Sort by date">Time <span id="sortArrow">▼</span></th><th>Wallet</th><th>Type</th><th>Market</th><th>Outcome</th>
+            <th class="sortable" id="thTime" title="Sort by date">Time (ET) <span id="sortArrow">▼</span></th><th>Wallet</th><th>Type</th><th>Market</th><th>Outcome</th>
             <th>Side</th><th class="num">Size</th><th class="num">Price</th><th class="num">USDC</th><th class="num" title="Estimated taker fee — makers pay no fee">Fee (est.)</th><th>Tx</th>
           </tr>
         </thead>
@@ -734,9 +734,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   const short = a => a ? a.slice(0,6) + "…" + a.slice(-4) : "";
   const fmtUsd = n => Number(n||0).toLocaleString("en-US",{maximumFractionDigits:2, minimumFractionDigits:2});
   const fmtNum = n => Number(n||0).toLocaleString("en-US",{maximumFractionDigits:4});
+  // all timestamps display in US Eastern time (Polymarket's house convention)
   const fmtTime = ts => {
     const d = new Date(ts*1000);
-    return d.toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    return d.toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",
+      timeZone:"America/New_York"});
   };
 
   function parseAddresses(raw){
@@ -2291,7 +2293,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(sellUs || sellSh) sum.push("sold <b>" + fmtNum(sellSh) + "</b> shares for <b>$" + fmtUsd(sellUs) + "</b>");
     if(redUs) sum.push("redeemed <b>$" + fmtUsd(redUs) + "</b>");
     return '<div class="pos-hist"><table><thead><tr>'
-      + "<th>Time</th><th>Type</th><th>Outcome</th>"
+      + "<th>Time (ET)</th><th>Type</th><th>Outcome</th>"
       + '<th class="num">Shares</th><th class="num">Price</th><th class="num">Amount</th><th>Tx</th>'
       + "</tr></thead><tbody>" + body + "</tbody></table>"
       + '<div class="pos-hist-sum">' + rows.length.toLocaleString() + " record" + (rows.length===1?"":"s")
@@ -2494,7 +2496,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return cfg;
   }
   const actCols = makeTableCfg(
-    ["Time","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"],
+    ["Time (ET)","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"],
     "tableWrap", "pmac_col_order", "pmac_hidden_cols",
     () => { if($("tableWrap").classList.contains("active")) renderTableChunk(true); });
   const posCols = makeTableCfg(
