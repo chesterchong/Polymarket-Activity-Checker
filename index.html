@@ -190,6 +190,10 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .sp-inner{position:sticky; top:8px; width:220px; box-sizing:border-box; padding:14px; display:flex; flex-direction:column; gap:8px;}
 .sp-title{font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted-foreground);}
 .sp-reset{margin-top:8px; align-self:flex-start; font-size:12px; height:28px; padding:0 10px; border-radius:999px;}
+/* time-zone picker lives in the same panel, under its own heading */
+.sp-tz-title{margin-top:14px; padding-top:12px; border-top:1px solid var(--border);}
+.sp-tz{display:flex;}
+.sp-tz .seg-btn{flex:1; height:28px; font-size:12px; padding:0;}
 .side-tabs{border:1px solid var(--border); background:var(--card); flex:0 0 auto;}
 .side-tab{
   position:sticky; top:8px; writing-mode:vertical-rl;
@@ -586,10 +590,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             <span class="dr-sep">–</span>
             <input type="date" id="dateTo" aria-label="To date">
           </span>
-          <span class="seg" id="tzSeg" role="group" aria-label="Time zone" title="Time zone for the Time column and the date filter">
-            <button type="button" class="seg-btn" data-tz="ET" title="US Eastern time">ET</button>
-            <button type="button" class="seg-btn" data-tz="GMT+8" title="Singapore / Malaysia time">GMT+8</button>
-          </span>
           <span class="search-wrap">
             <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
             <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
@@ -653,6 +653,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <div class="sp-title">Columns</div>
           <div id="colsList" class="cols-list"></div>
           <button type="button" class="btn btn-ghost sp-reset" id="colsReset" title="Restore this view's default column order and visibility">Reset columns</button>
+          <div class="sp-title sp-tz-title">Time zone</div>
+          <div class="seg sp-tz" id="tzSeg" role="group" aria-label="Time zone" title="Time zone for the Time column and the date filter">
+            <button type="button" class="seg-btn" data-tz="ET" title="US Eastern time">ET</button>
+            <button type="button" class="seg-btn" data-tz="GMT+8" title="Singapore / Malaysia time">GMT+8</button>
+          </div>
         </div>
       </div>
       <div class="side-tabs">
