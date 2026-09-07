@@ -582,6 +582,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="fchip" data-pstat="notredeemed" title="Won but the payout has not been claimed yet">Not redeemed <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="redeemed" title="Payouts already claimed (from the wallet's redeem history) or auto-settled combo wins">Redeemed <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="loss" title="Resolved as a loss, or valued at $0">Loss <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="sold" title="Fully sold before resolution — no shares held; PnL is the realized result">Sold <span class="cnt">0</span></button>
         </div>
         <span class="rb-group">
           <span class="date-range" title="Show records between these dates">
@@ -1647,6 +1648,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       endDate: legs.reduce((m,l) => { const d = (l.market && l.market.end_date) || ""; return d > m ? d : m; }, "")
     };
   }
+  // a fully-sold position holds nothing: value is $0, PnL is the realized
+  // result, and Shares shows the total bought over the position's life
+  function mapClosedPosition(p){
+    const bought = Number(p.totalBought) || 0;
+    const initial = bought * (Number(p.avgPrice) || 0);
+    const pnl = Number(p.realizedPnl) || 0;
+    return {...p, isClosed: true, size: bought,
+      initialValue: initial, currentValue: 0,
+      cashPnl: pnl, percentPnl: initial ? pnl / initial * 100 : NaN,
+      redeemable: false};
+  }
   async function loadPositions(){
     const myRun = ++posRunSeq; // a newer run() or reload invalidates this fetch
     posLoading = true; posLoaded = false; posError = null; posTruncated = false;
@@ -1712,9 +1724,22 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             })), truncated: r.truncated};
           })
           .catch(() => ({rows:[], truncated:false})); // additive, like combos
-        const [singles, combos, redeems] = await Promise.all([singlesP, combosP, redeemsP]);
-        return {ok:true, rows: singles.out.concat(combos.rows, redeems.rows),
-          truncated: singles.truncated || combos.truncated || redeems.truncated};
+        // positions fully sold before resolution never appear in /positions —
+        // /closed-positions carries them. It also re-lists redeemed and
+        // still-held markets, so only rows not already represented are added.
+        const closedP = pagedFetch(
+          page => "https://data-api.polymarket.com/closed-positions?" + new URLSearchParams({user:addr, limit:"500", offset:String(page*500)}).toString(),
+          j => j)
+          .then(r => ({rows: r.out.map(mapClosedPosition), truncated: r.truncated}))
+          .catch(() => ({rows:[], truncated:false})); // additive, like combos
+        const [singles, combos, redeems, closed] = await Promise.all([singlesP, combosP, redeemsP, closedP]);
+        // key on market + outcome: selling one side of a market must still show
+        // when the other side is held or was redeemed
+        const posKeyOf = p => ((p.conditionId || "") + "|" + (p.outcome || "")).toLowerCase();
+        const seenCond = new Set(singles.out.concat(redeems.rows).map(posKeyOf));
+        const closedRows = closed.rows.filter(p => (p.conditionId || "") && !seenCond.has(posKeyOf(p)));
+        return {ok:true, rows: singles.out.concat(combos.rows, redeems.rows, closedRows),
+          truncated: singles.truncated || combos.truncated || redeems.truncated || closed.truncated};
       }catch(e){
         return {ok:false, addr, err:e.message};
       }
@@ -1748,8 +1773,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function visiblePositions(){
     let rows = basePositions();
     if(posStatusFilter.size) rows = rows.filter(p => posStatusFilter.has(posStatus(p)));
-    // redeemed rows have no current value — their payout is the comparable number
-    const valOf = p => p.isRedeemed ? (Number(p.payout)||0) : (Number(p.currentValue)||0);
+    // redeemed/sold rows have no current value — payout / cost basis is the comparable number
+    const valOf = p => p.isRedeemed ? (Number(p.payout)||0)
+      : p.isClosed ? (Number(p.initialValue)||0) : (Number(p.currentValue)||0);
     rows.sort((a,b) => valOf(b) - valOf(a));
     return rows;
   }
@@ -1759,8 +1785,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   //   redeemed    — payout already claimed (synthesized from REDEEM activity) or
   //                 an auto-settled combo win
   //   open        — market still in progress
-  const POS_STATUS_LABEL = {open:"OPEN", loss:"LOSS", redeemed:"REDEEMED", notredeemed:"NOT REDEEMED"};
+  //   sold        — the whole position was sold off before resolution
+  const POS_STATUS_LABEL = {open:"OPEN", loss:"LOSS", redeemed:"REDEEMED", notredeemed:"NOT REDEEMED", sold:"SOLD"};
   function posStatus(p){
+    if(p.isClosed) return "sold";
     if(p.isRedeemed) return "redeemed";
     const value = Number(p.currentValue) || 0;
     const resolvedLoss = p.isCombo ? p.posStatus === "loss"
@@ -1786,7 +1814,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         const st = posStatus(p);
         return st === "notredeemed" ? ' <span class="badge buy">NOT REDEEMED</span>'
           : st === "redeemed" ? ' <span class="badge neutral">REDEEMED</span>'
-          : st === "loss" ? ' <span class="badge sell">LOST</span>' : "";
+          : st === "loss" ? ' <span class="badge sell">LOST</span>'
+          : st === "sold" ? ' <span class="badge neutral">SOLD</span>' : "";
       })()+"</td>",
       '<td class="num mono">'+fmtNum(p.size)+"</td>",
       '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "—")+"</td>",
@@ -1813,7 +1842,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posRenderKey = key;
     // faceted chip counts: each family counts against the OTHER family's selection
     // (status counts respect Single/Combo; Single/Combo counts respect status)
-    const counts = {open:0, notredeemed:0, redeemed:0, loss:0};
+    const counts = {open:0, notredeemed:0, redeemed:0, loss:0, sold:0};
     basePositions().forEach(p => counts[posStatus(p)]++);
     document.querySelectorAll(".fchip[data-pstat] .cnt").forEach(el =>
       el.textContent = (counts[el.parentElement.dataset.pstat] || 0).toLocaleString());
