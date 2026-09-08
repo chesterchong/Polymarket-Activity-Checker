@@ -441,6 +441,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 .wallet-tag:hover{border-color:var(--primary); color:var(--foreground);}
 .wallet-tag .wtype{color:var(--primary); font-weight:500; margin-left:6px;}
 .wallet-tag.cur{border-color:var(--primary);}
+/* split-button copy: the ⧉ half shares a border with the chip */
+.wallet-pair{display:flex; flex-shrink:0;}
+.wallet-copy{border:1px solid var(--primary); border-left:1px solid var(--border); background:var(--card); color:var(--muted-foreground); cursor:pointer; font-size:12px; padding:4px 8px; margin-left:-1px; font-family:inherit;}
+.wallet-copy:hover{color:var(--primary); border-color:var(--primary); position:relative; z-index:1;}
+.wallet-copy.ok{color:var(--success); border-color:var(--success); position:relative; z-index:1;}
 .wallets .sep{color:var(--muted-foreground); font-size:12px; align-self:center; flex-shrink:0;}
 
 /* active D/W chip */
@@ -1117,13 +1122,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const box = $("walletsBox");
     const cur = currentWallets.map(a => {
       const label = walletMeta.get(a.toLowerCase());
-      return '<a class="wallet-tag cur" href="https://polygonscan.com/address/' + esc(a)
+      return '<span class="wallet-pair"><a class="wallet-tag cur" href="https://polygonscan.com/address/' + esc(a)
         + '#tokentxns" target="_blank" rel="noopener" title="Open this address’s token transfers on Polygonscan">'
-        + esc(short(a)) + '<span class="wtype">' + esc(label || "…") + '</span></a>';
+        + esc(short(a)) + '<span class="wtype">' + esc(label || "…") + '</span></a>'
+        + '<button type="button" class="wallet-copy" data-copy="' + esc(a)
+        + '" title="Copy the full address" aria-label="Copy the full address">⧉</button></span>';
     });
     box.innerHTML = cur.join("");
     box.classList.toggle("active", cur.length > 0);
   }
+  $("walletsBox").addEventListener("click", e => {
+    const b = e.target.closest(".wallet-copy");
+    if(b) copyText(b.dataset.copy, b);
+  });
 
   async function run(){
     if(fetching) return;
