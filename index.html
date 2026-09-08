@@ -1125,8 +1125,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       return '<span class="wallet-pair"><a class="wallet-tag cur" href="https://polygonscan.com/address/' + esc(a)
         + '#tokentxns" target="_blank" rel="noopener" title="Open this address’s token transfers on Polygonscan">'
         + esc(short(a)) + '<span class="wtype">' + esc(label || "…") + '</span></a>'
-        + '<button type="button" class="wallet-copy" data-copy="' + esc(a)
-        + '" title="Copy the full address" aria-label="Copy the full address">⧉</button></span>';
+        + '<button type="button" class="wallet-copy" data-copy="https://polygonscan.com/address/' + esc(a)
+        + '#tokentxns" title="Copy the Polygonscan link" aria-label="Copy the Polygonscan link">⧉</button></span>';
     });
     box.innerHTML = cur.join("");
     box.classList.toggle("active", cur.length > 0);
