@@ -645,7 +645,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <table>
         <thead>
           <tr>
-            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th>
+            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num" title="Cost basis of the position (USDC)">Cost</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th>
           </tr>
         </thead>
         <tbody id="posBody"></tbody>
@@ -1831,6 +1831,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       '<td class="num mono">'+fmtNum(p.size)+"</td>",
       '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "—")+"</td>",
       '<td class="num mono">'+(p.curPrice!=null ? Number(p.curPrice).toFixed(3) : "—")+"</td>",
+      '<td class="num mono">'+(p.initialValue != null && Number.isFinite(Number(p.initialValue)) ? "$"+fmtUsd(p.initialValue) : "—")+"</td>",
       (p.isRedeemed
         ? '<td class="num mono" title="Payout received at redemption">$'+fmtUsd(p.payout)+"</td>"
         : '<td class="num mono">$'+fmtUsd(p.currentValue)+"</td>"),
@@ -1978,8 +1979,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     + (dir === "px-up" ? "▲" : "▼") + "</span>";
   function applyLivePrices(changed, totalDelta){
     const body = $("posBody");
-    // original column indices: 5 = Cur price, 6 = Value, 7 = PnL
-    const curPos = posCols.order.indexOf(5), valPos = posCols.order.indexOf(6), pnlPos = posCols.order.indexOf(7);
+    // original column indices: 5 = Cur price, 7 = Value, 8 = PnL
+    const curPos = posCols.order.indexOf(5), valPos = posCols.order.indexOf(7), pnlPos = posCols.order.indexOf(8);
     // expanded detail rows sit between position rows — address rows by data-pi, not child index
     const rowByPi = new Map();
     for(const tr of body.children)
@@ -2592,8 +2593,22 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     ["Time (ET)","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"],
     "tableWrap", "pmac_col_order", "pmac_hidden_cols",
     () => { if($("tableWrap").classList.contains("active")) renderTableChunk(true); });
+  // Insert Cost before Value while retaining existing column order/visibility.
+  try{
+    const saved = JSON.parse(localStorage.getItem("pmac_pos_col_order"));
+    if(Array.isArray(saved) && saved.length === 9
+      && [...saved].sort((a,b)=>a-b).every((v,i)=>v===i)){
+      const order = saved.map(i => i >= 6 ? i + 1 : i);
+      order.splice(order.indexOf(7), 0, 6);
+      const hidden = JSON.parse(localStorage.getItem("pmac_pos_hidden_cols")) || [];
+      localStorage.setItem("pmac_pos_hidden_cols", JSON.stringify(hidden
+        .filter(i => Number.isInteger(i) && i >= 0 && i < 9)
+        .map(i => i >= 6 ? i + 1 : i)));
+      localStorage.setItem("pmac_pos_col_order", JSON.stringify(order));
+    }
+  }catch(e){}
   const posCols = makeTableCfg(
-    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Value","PnL","End date"],
+    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Cost","Value","PnL","End date"],
     "posWrap", "pmac_pos_col_order", "pmac_pos_hidden_cols",
     () => { posRenderKey = null; renderPositions(); });
   const activeColsCfg = () => $("tabPositions").classList.contains("on") ? posCols : actCols;
