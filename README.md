@@ -29,7 +29,7 @@ No wallet connection, private key, seed phrase, or transaction signing is requir
 | PnL | Reported position profit or loss and percentage, when available. Redeemed rows may have no PnL. |
 | End date | Reported market end date. |
 
-Open single-market prices are refreshed approximately every 10 seconds while the positions view and browser tab are visible. These updates use market midpoints; they are not guaranteed execution prices. Open combo prices are estimated from their legs.
+Open single-market prices refresh while the positions view and browser tab are visible, with a 10-second countdown after each refresh completes. The countdown beside **Reset filters** shows when the next refresh is due and displays **Refreshing…** during a request. Refreshing pauses while the browser tab is hidden. These updates use market midpoints; they are not guaranteed execution prices. Open combo prices are estimated from their legs.
 
 The time-range selector controls the activity search and summary PnL period. Positions reflect current holdings and available position history, rather than holdings at a historical date. The summary **PnL** and **Portfolio value** cards are not recalculated by the client-side filters below them.
 

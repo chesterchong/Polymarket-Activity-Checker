@@ -219,6 +219,8 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .results-bar.pos-mode .fchip[data-cat="rewards"]{display:none;}
 .fchips.pos-only{display:none;}
 .results-bar.pos-mode .fchips.pos-only{display:inline-flex;}
+.refresh-countdown{display:none; color:var(--muted-foreground); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap;}
+.results-bar.pos-mode .refresh-countdown{display:inline-block;}
 .pos-note{padding:10px 14px; font-size:12px; color:var(--muted-foreground); border-bottom:1px solid var(--border);}
 .pos-note:empty{display:none;}
 td.pos{color:var(--success);}
@@ -603,6 +605,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         </span>
         <span id="chips" class="chips"></span>
         <span class="flex-spacer"></span>
+        <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" title="Live prices refresh for open single-market positions">Next refresh in 10s</span>
         <button class="btn btn-ghost" id="resetBtn" title="Reset all filters">Reset filters</button>
       </div>
     </div>
@@ -1570,7 +1573,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // no auto-retry after a failure (posError) — progressive feed chunks re-dispatch
     // here and would otherwise hammer a failing endpoint in a loop
     if(!posLoaded && !posLoading && !posError && currentWallets.length) loadPositions();
-    else pollLivePrices(); // returning to the tab refreshes prices immediately
+    else pollLivePrices(); // refresh immediately if the scheduled tick is due
   }
 
   // ---------- drag-to-scroll affordance ----------
@@ -1674,6 +1677,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const myRun = ++posRunSeq; // a newer run() or reload invalidates this fetch
     posLoading = true; posLoaded = false; posError = null; posTruncated = false;
     posFailedWallets = []; allPositions = [];
+    nextLiveRefreshAt = 0;
+    updateRefreshCountdown();
     renderPositions();
     // per-wallet errors keep the other wallets' positions instead of failing the lot
     const results = await Promise.all(currentWallets.map(async addr => {
@@ -1907,20 +1912,37 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       + (liveActive ? '<span class="live-pill"><span class="live-dot"></span>live</span>' : "");
   }
 
-  // ---------- live prices for open single positions (CLOB midpoints, every 10s) ----------
+  // ---------- live prices for open single positions (10s between CLOB midpoint refreshes) ----------
   // One batched POST per tick, only while the positions view is visible in a
   // focused tab. Prices patch the data model, then only the affected cells and
   // the totals line update in place — no full re-render, no re-sort jumping.
   const LIVE_MS = 10000, LIVE_MAX_TOKENS = 600, LIVE_CHUNK = 300;
   let liveBusy = false, liveActive = false;
+  let nextLiveRefreshAt = 0;
+  function hasLivePositions(){
+    return allPositions.some(p => !p.isCombo && p.asset && posStatus(p) === "open");
+  }
+  function updateRefreshCountdown(){
+    const label = $("refreshCountdown");
+    if(!$("posWrap").classList.contains("active")) return;
+    if(posLoading) label.textContent = "Loading positions…";
+    else if(!posLoaded) label.textContent = "Refresh unavailable";
+    else if(!hasLivePositions()) label.textContent = "No live prices to refresh";
+    else if(document.hidden) label.textContent = "Refresh paused";
+    else if(liveBusy) label.textContent = "Refreshing…";
+    else label.textContent = "Next refresh in " + Math.max(0, Math.ceil((nextLiveRefreshAt - Date.now()) / 1000)) + "s";
+  }
   async function pollLivePrices(){
+    updateRefreshCountdown();
     if(liveBusy || posLoading || !posLoaded || document.hidden) return;
     if(!$("posWrap").classList.contains("active")) return;
+    if(Date.now() < nextLiveRefreshAt) return;
     const targets = allPositions.filter(p => !p.isCombo && p.asset && posStatus(p) === "open");
     if(!targets.length) return;
     const tokens = [...new Set(targets.map(p => String(p.asset)))].slice(0, LIVE_MAX_TOKENS);
     const myRun = posRunSeq;
     liveBusy = true;
+    updateRefreshCountdown();
     try{
       const chunks = [];
       for(let i = 0; i < tokens.length; i += LIVE_CHUNK) chunks.push(tokens.slice(i, i + LIVE_CHUNK));
@@ -1951,7 +1973,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       liveActive = true;
       applyLivePrices(changed, totalDelta);
     }catch(e){ console.warn("live prices tick failed:", e); /* transient — next tick retries */ }
-    finally{ liveBusy = false; }
+    finally{
+      liveBusy = false;
+      // Schedule from completion so slow requests never overlap and the label
+      // counts down to the same deadline used by the polling timer.
+      nextLiveRefreshAt = myRun === posRunSeq ? Date.now() + LIVE_MS : 0;
+      updateRefreshCountdown();
+    }
   }
   // stock-ticker motion: the number rolls from old to new over ~700ms (easeOut)
   // while the cell flashes green/red, and the price keeps a last-tick ▲/▼ arrow
@@ -2013,7 +2041,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     }
     setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
   }
-  setInterval(pollLivePrices, LIVE_MS);
+  function tickLiveRefresh(){
+    if(Date.now() >= nextLiveRefreshAt) pollLivePrices();
+    else updateRefreshCountdown();
+  }
+  setInterval(tickLiveRefresh, 1000);
+  document.addEventListener("visibilitychange", tickLiveRefresh);
 
   // ---------- live wallet cash balance (on-chain balanceOf via public RPC) ----------
   // USDC.e + native USDC + PUSD (all 6 decimals) summed across the searched
