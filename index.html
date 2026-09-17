@@ -585,11 +585,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="fchip" data-cat="rewards" title="Rewards, yield, rebates and referral payouts">Rewards</button>
         </div>
         <div class="fchips pos-only" role="group" aria-label="Position status">
-          <button type="button" class="fchip on" data-pstat="open" title="Markets still in progress">Open <span class="cnt">0</span></button>
+          <button type="button" class="fchip on" id="allPositionStatuses" title="Show all position statuses in the selected window">All <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="open" title="Markets still in progress">Open <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="notredeemed" title="Won but the payout has not been claimed yet">Not redeemed <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="redeemed" title="Payouts already claimed (from the wallet's redeem history) or auto-settled combo wins">Redeemed <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="loss" title="Resolved as a loss, or valued at $0">Loss <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="sold" title="Fully sold before resolution — no shares held; PnL is the realized result">Sold <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="history" title="Activity found, but the position snapshot is unavailable">History <span class="cnt">0</span></button>
         </div>
         <span class="rb-group">
           <span class="date-range" title="Show records between these dates">
@@ -648,7 +650,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <table>
         <thead>
           <tr>
-            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num" title="Cost basis of the position (USDC)">Cost</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th>
+            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num" title="Cost basis of the position (USDC)">Cost</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th><th class="num" title="Estimated taker fees for this position’s trades in the selected search window and date range; makers pay no fee">Fees (est.)</th>
           </tr>
         </thead>
         <tbody id="posBody"></tbody>
@@ -1152,8 +1154,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // everything else filters client-side after the data is in
     const params = {};
     const win = timeWin;
-    if(win) params.start = String(Math.floor(Date.now()/1000) - Number(win));
+    params.start = win ? String(Math.floor(Date.now()/1000) - Number(win)) : "1";
     lastParams = params;
+    for(const [key, schedule] of feeCache) if(schedule?.unavailable) feeCache.delete(key);
     feedTruncated = false;
     // rebates are always pre-fetched below; D/W come from the chain, not this API
     deepFetched = new Set(["TAKER_REBATE","MAKER_REBATE","DEPOSIT","WITHDRAWAL"]);
@@ -1171,6 +1174,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // above already stripped the wrap's active class.
     posRunSeq++; allPositions = []; posLoaded = false; posLoading = false;
     posError = null; posTruncated = false; posFailedWallets = []; posRenderKey = null;
+    positionGroupCache = null; liveActivityCheckedAt = Math.floor(Date.now()/1000); nextHistoryRefreshAt = 0;
     liveActive = false; livePositionError = "";
     if($("tabPositions").classList.contains("on")) loadPositions();
     lastBalance = null; $("stBalance").textContent = "–";
@@ -1327,12 +1331,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         });
       runPnl(1);
       $("stPortfolio").textContent = "…";
-      Promise.all(valid.map(a =>
-        fetchWithRetry("https://data-api.polymarket.com/value?user=" + a, 3, 15000)
-          .then(res => res.json())
-          .then(j => Number((Array.isArray(j) && j[0] && j[0].value) || 0))))
-        .then(parts => { $("stPortfolio").textContent = "$" + fmtUsd(parts.reduce((s,v)=>s+v, 0)); })
-        .catch(() => { $("stPortfolio").textContent = "–"; });
+      refreshPortfolioValue(posRunSeq);
       allRecords.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       if(notes.length) errBox.textContent = notes.join(" · ");
       renderAll();
@@ -1373,13 +1372,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const wd  = rows.reduce((s,r)=>s+(r.type==="WITHDRAWAL" ? Number(r.usdcSize)||0 : 0),0);
     $("stDeposits").textContent = "$" + fmtUsd(dep);
     $("stWithdrawals").textContent = "$" + fmtUsd(wd);
-    let feeSum = 0, feePending = false;
+    let feeSum = 0, feePending = false, feePartial = false;
     for(const r of rows){
       const f = computeFeeFor(r);
-      if(f === undefined) feePending = true;
+      if(f === undefined){ if(feeUnavailable(r)) feePartial = true; else feePending = true; }
       else if(f) feeSum += f;
     }
-    $("stFees").textContent = "$" + fmtUsd(feeSum) + (feePending ? " …" : "");
+    $("stFees").textContent = "$" + fmtUsd(feeSum) + (feePartial ? " (partial)" : feePending ? " …" : "");
     const rebates = rows.reduce((s,r)=>s+(r.type==="TAKER_REBATE" ? Number(r.usdcSize)||0 : 0),0);
     $("stTakerRebates").textContent = "$" + fmtUsd(rebates);
     $("stCombos").textContent = combos.toLocaleString();
@@ -1390,6 +1389,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
 
   function renderAll(){
+    positionGroupCache = null; posRenderKey = null;
     applySearch();
     renderSummary();
     loadFeesFor(filteredRecords); // async; resolves the Fees (est.) total
@@ -1453,24 +1453,53 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // ---------- estimated trade fees (Gamma fee schedules, fetched lazily) ----------
   // fee = rate × min(price, 1−price)^exponent × shares — the taker fee formula.
   // Makers pay no fee on takerOnly schedules, so this is an upper-bound estimate.
-  const feeCache = new Map(); // lowercase conditionId -> {rate, exponent} | null (fee-free)
+  const feeCache = new Map(); // conditionId -> {rate, exponent} | null (confirmed fee-free) | {unavailable:true}
   function computeFeeFor(r){
-    if(r.type !== "TRADE" || !r.conditionId) return null;
+    if(r.type !== "TRADE") return null;
+    if(!r.conditionId) return undefined;
     const s = feeCache.get(r.conditionId.toLowerCase());
-    if(s === undefined) return undefined; // schedule not fetched yet
-    if(!s) return 0;
-    const p = Number(r.price) || 0;
-    return s.rate * Math.pow(Math.min(p, 1-p), s.exponent) * (Number(r.size) || 0);
+    if(s === undefined || (s && s.unavailable)) return undefined;
+    if(s === null) return 0;
+    const p = Number(r.price), size = Number(r.size);
+    if(r.price == null || r.size == null || !Number.isFinite(p) || p < 0 || p > 1 || !Number.isFinite(size) || size < 0) return undefined;
+    return s.rate * Math.pow(Math.min(p, 1-p), s.exponent) * size;
+  }
+  function feeUnavailable(r){
+    if(!r.conditionId) return true;
+    const schedule = feeCache.get(r.conditionId.toLowerCase());
+    return schedule?.unavailable === true || (schedule !== undefined && computeFeeFor(r) === undefined);
   }
   function feeCellText(r){
     if(r.type !== "TRADE") return "—";
     const f = computeFeeFor(r);
-    return f === undefined ? "…" : fmtUsd(f);
+    return f === undefined ? (feeUnavailable(r) ? "Unavailable" : "…") : fmtUsd(f);
+  }
+  function positionFeeEstimate(p){
+    const trades = positionTradesFor(p);
+    if(!trades.length) return undefined;
+    let sum = 0;
+    for(const r of trades){
+      const fee = computeFeeFor(r);
+      if(typeof fee !== "number" || !Number.isFinite(fee)) return undefined;
+      sum += fee;
+    }
+    return sum;
+  }
+  function positionFeeText(p){
+    const f = positionFeeEstimate(p);
+    if(f !== undefined) return "$" + fmtUsd(f);
+    const trades = positionTradesFor(p);
+    if(!trades.length) return "—";
+    return trades.some(feeUnavailable) ? "Unavailable" : "…";
   }
   function refreshFeeCells(){
     document.querySelectorAll("#tableBody .fee-cell").forEach(td => {
       const r = filteredRecords[Number(td.dataset.i)];
       if(r) td.textContent = feeCellText(r);
+    });
+    document.querySelectorAll("#posBody .pos-fee-cell").forEach(td => {
+      const p = posRendered[Number(td.dataset.pi)];
+      if(p) td.textContent = positionFeeText(p);
     });
   }
   const feeInflight = new Set();
@@ -1479,32 +1508,43 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       .filter(r => r.type === "TRADE" && r.conditionId
         && !feeCache.has(r.conditionId.toLowerCase())
         && !feeInflight.has(r.conditionId.toLowerCase()))
-      .map(r => r.conditionId))];
-    need.forEach(id => feeInflight.add(id.toLowerCase()));
+      .map(r => r.conditionId.toLowerCase()))];
+    need.forEach(id => feeInflight.add(id));
     for(let i=0; i<need.length; i+=20){
       const chunk = need.slice(i, i+20);
-      try{
-        const res = await fetch("https://gamma-api.polymarket.com/markets?"
-          + chunk.map(id => "condition_ids=" + encodeURIComponent(id)).join("&"));
-        if(res.ok){
-          const mkts = await res.json();
-          for(const m of (Array.isArray(mkts) ? mkts : [])){
-            if(!m.conditionId) continue;
-            let sch = m.feeSchedule;
-            if(typeof sch === "string"){ try{ sch = JSON.parse(sch); }catch(e){ sch = null; } }
-            feeCache.set(m.conditionId.toLowerCase(),
-              (m.feesEnabled && sch && Number(sch.rate) > 0)
-                ? {rate: Number(sch.rate), exponent: Number(sch.exponent) || 1}
-                : null);
+      // Gamma defaults to open markets. Search closed markets for any IDs omitted
+      // from that response so historical positions receive their published schedules.
+      for(const closed of [false, true]){
+        const missing = chunk.filter(id => !feeCache.has(id));
+        if(!missing.length) break;
+        try{
+          const res = await fetchWithRetry("https://gamma-api.polymarket.com/markets?"
+            + missing.map(id => "condition_ids=" + encodeURIComponent(id)).join("&")
+            + "&closed=" + closed + "&limit=20", 2, 8000);
+          if(res.ok){
+            const mkts = await res.json();
+            for(const m of (Array.isArray(mkts) ? mkts : [])){
+              if(!m.conditionId) continue;
+              let sch = m.feeSchedule;
+              if(typeof sch === "string"){ try{ sch = JSON.parse(sch); }catch(e){ sch = null; } }
+              const rate = sch && Number(sch.rate);
+              const exponent = sch && (sch.exponent == null ? 1 : Number(sch.exponent) || 1);
+              const schedule = m.feesEnabled === false ? null
+                : m.feesEnabled === true && sch && Number.isFinite(rate) && rate >= 0
+                  && Number.isFinite(exponent) && exponent >= 0
+                  ? (rate === 0 ? null : {rate, exponent})
+                  : {unavailable:true};
+              feeCache.set(m.conditionId.toLowerCase(), schedule);
+            }
           }
-        }
-      }catch(e){}
-      // anything gamma didn't return is treated as fee-free rather than re-fetched forever
-      chunk.forEach(id => { const k = id.toLowerCase(); if(!feeCache.has(k)) feeCache.set(k, null); });
+        }catch(e){}
+      }
+      // A failed or incomplete response cannot establish that a market was fee-free.
+      chunk.forEach(id => { if(!feeCache.has(id)) feeCache.set(id, {unavailable:true}); });
       refreshFeeCells();
       renderSummary(); // keep the Fees (est.) stat converging as schedules arrive
     }
-    need.forEach(id => feeInflight.delete(id.toLowerCase()));
+    need.forEach(id => feeInflight.delete(id));
   }
 
   function rowHtml(r, idx){
@@ -1616,13 +1656,115 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // now but lets it reappear on a later search, since they may not have seen it
   $("tableWrap").addEventListener("scroll", ()=>dismissDragHint(false), {passive:true});
 
-  // ---------- positions tab (data-api /positions — independent of the activity feed) ----------
+  // ---------- positions tab (activity selects markets; snapshots own holdings) ----------
   let allPositions = [], posLoaded = false, posLoading = false, posRunSeq = 0;
   let posError = null, posTruncated = false, posFailedWallets = [], posRenderKey = null;
-  let posStatusFilter = new Set(["open"]); // of "open" | "notredeemed" | "redeemed" | "loss" — Open by default
+  let posStatusFilter = new Set(); // no selected status means all positions in the search
   let posRendered = []; // the rows currently in the DOM, for tooltip lookups
   const POS_MAX_PAGES = 4;   // 4 × 500 = 2,000 positions per wallet, surfaced in the note when hit
   const POS_VIEW_CAP = 1000; // DOM safety, like JSON_VIEW_CAP — the CSV still exports everything
+  const POS_CLOSED_MAX_PAGES = 40; // closed endpoint caps each page at 50, not 500
+  let positionGroupCache = null;
+  function positionGroupKey(p){
+    const wallet = (p.proxyWallet || "").toLowerCase();
+    const kind = p.isCombo ? "combo" : "single";
+    const asset = p.asset || p.combo_position_id;
+    return wallet + "|" + kind + "|" + (asset ? "asset:" + asset : "market:" + (p.conditionId || "") + "|" + (p.outcome || (p.outcomeIndex ?? "unknown"))).toLowerCase();
+  }
+  function positionOutcomeKey(p){
+    if(!p.conditionId || (!p.outcome && (p.outcomeIndex == null || Number(p.outcomeIndex) === 999))) return "";
+    return [(p.proxyWallet || "").toLowerCase(), p.isCombo ? "combo" : "single", p.conditionId.toLowerCase(), String(p.outcome || p.outcomeIndex).toLowerCase()].join("|");
+  }
+  function positionActivityGroups(){
+    const from = dateBound("dateFrom", false), to = dateBound("dateTo", true);
+    const cacheKey = [allRecords.length, lastParams.start || "", lastParams.end || "", from, to].join("|");
+    if(positionGroupCache?.key === cacheKey) return positionGroupCache.groups;
+    const groups = new Map();
+    groups.byKey = new Map();
+    groups.byOutcome = new Map();
+    for(const r of allRecords){
+      if(!["TRADE","REDEEM","SPLIT","MERGE","CONVERSION"].includes(r.type)) continue;
+      if(!r.asset && !r.conditionId && !r.combo_position_id) continue;
+      const ts = Number(r.timestamp) || 0;
+      if(lastParams.start && ts < Number(lastParams.start)) continue;
+      if(lastParams.end && ts > Number(lastParams.end)) continue;
+      if(from != null && ts < from) continue;
+      if(to != null && ts > to) continue;
+      const key = positionGroupKey(r), outcomeKey = positionOutcomeKey(r);
+      const direct = groups.byKey.get(key), alias = outcomeKey && groups.byOutcome.get(outcomeKey);
+      let group = direct || alias;
+      if(direct && alias && direct !== alias){
+        // A later record can supply both identities after earlier records each
+        // supplied only one. Join them once so fees and rows are not split.
+        direct.records.push(...alias.records); direct.trades.push(...alias.trades);
+        if(Number(alias.latest.timestamp) > Number(direct.latest.timestamp)) direct.latest = alias.latest;
+        for(const [k,g] of groups) if(g === alias) groups.delete(k);
+        for(const [k,g] of groups.byKey) if(g === alias) groups.byKey.set(k, direct);
+        for(const [k,g] of groups.byOutcome) if(g === alias) groups.byOutcome.set(k, direct);
+      }
+      if(!group){ group = {trades:[], records:[], latest:r}; groups.set(key, group); }
+      groups.byKey.set(key, group);
+      if(outcomeKey) groups.byOutcome.set(outcomeKey, group);
+      group.records.push(r);
+      if(r.type === "TRADE") group.trades.push(r);
+      if(ts > Number(group.latest.timestamp || 0)) group.latest = r;
+    }
+    positionGroupCache = {key:cacheKey, groups};
+    return groups;
+  }
+  function positionGroupFor(p, groups=positionActivityGroups()){
+    return groups.byKey.get(positionGroupKey(p)) || groups.byOutcome.get(positionOutcomeKey(p));
+  }
+  function positionTradesFor(p){
+    return positionGroupFor(p)?.trades || [];
+  }
+  function positionViewRows(){
+    const groups = positionActivityGroups();
+    const restricted = Number(lastParams.start) > 1 || !!lastParams.end
+      || dateBound("dateFrom", false) != null || dateBound("dateTo", true) != null;
+    const rows = [], seenGroups = new Set(), seenSnapshots = new Set();
+    // Current holdings win over historical snapshots of a re-entered market.
+    const priority = p => !p.isClosed && !p.isRedeemed ? 0 : p.isRedeemed ? 1 : 2;
+    for(const p of [...allPositions].sort((a,b) => priority(a)-priority(b))){
+      const group = positionGroupFor(p, groups), key = positionGroupKey(p);
+      if(restricted && !group) continue;
+      if((group && seenGroups.has(group)) || seenSnapshots.has(key)) continue;
+      rows.push(p); seenSnapshots.add(key);
+      if(group) seenGroups.add(group);
+    }
+    for(const group of groups.values()){
+      if(seenGroups.has(group)) continue;
+      seenGroups.add(group);
+      const r = group.latest;
+      // A bounded activity feed cannot establish the starting inventory or the
+      // final holding. Keep its market visible without inventing balances/PnL.
+      rows.push({...r, isActivityOnly:true, size:null, avgPrice:null, curPrice:null,
+        initialValue:null, currentValue:null, cashPnl:null, percentPnl:NaN,
+        redeemable:false, endDate:""});
+    }
+    return rows;
+  }
+  async function fetchClosedPositions(addr){
+    const out = [], seen = new Set();
+    for(let page = 0; page < POS_CLOSED_MAX_PAGES; page++){
+      const url = "https://data-api.polymarket.com/closed-positions?" + new URLSearchParams({
+        user:addr, limit:"50", offset:String(page*50), sortBy:"TIMESTAMP", sortDirection:"DESC"
+      });
+      const res = await fetchWithRetry(url, 2, 15000, {cache:"no-store"});
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      const rows = await res.json();
+      if(!Array.isArray(rows)) throw new Error("Invalid closed positions response");
+      for(const raw of rows){
+        const p = {...raw, proxyWallet:addr}, key = positionGroupKey(p);
+        if(!seen.has(key)){ seen.add(key); out.push(mapClosedPosition(p)); }
+      }
+      if(rows.length < 50) return {rows:out, truncated:false};
+      // Sorted close timestamps older than the search cannot match newer trades.
+      const oldest = rows[rows.length-1]?.timestamp;
+      if(Number(lastParams.start) > 1 && oldest != null && Number(oldest) < Number(lastParams.start)) return {rows:out, truncated:false};
+    }
+    return {rows:out, truncated:true};
+  }
   // combo (parlay) positions come from a separate endpoint; map them onto the same
   // row shape. Price: resolved combos are 0/1 by status; open ones are estimated
   // from the product of the legs' current prices (the YES side of a parlay).
@@ -1680,7 +1822,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // for empty wallets so their first purchase can appear without a new search.
     for(let page = 0; page < POS_MAX_PAGES; page++){
       const url = "https://data-api.polymarket.com/positions?" + new URLSearchParams({
-        user:addr, limit:"500", offset:String(page*500), sizeThreshold:"1"
+        user:addr, limit:"500", offset:String(page*500), sizeThreshold:"0", includeArchived:"true"
       });
       const res = await fetchWithRetry(url, 2, 8000, {cache:"no-store"});
       if(!res.ok) throw new Error("HTTP " + res.status);
@@ -1737,7 +1879,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           .then(r => {
             const byCond = new Map();
             for(const rec of r.out){
-              const k = (rec.conditionId || rec.transactionHash || "").toLowerCase();
+              const k = positionGroupKey({...rec, proxyWallet:addr});
               const g = byCond.get(k) || {size:0, payout:0, ts:0, rec};
               g.size += Number(rec.size) || 0;
               g.payout += Number(rec.usdcSize) || 0;
@@ -1745,7 +1887,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
               byCond.set(k, g);
             }
             return {rows: [...byCond.values()].map(g => ({
-              proxyWallet: addr, asset: "", conditionId: g.rec.conditionId || "",
+              proxyWallet: addr, asset: g.rec.asset || "", conditionId: g.rec.conditionId || "", outcomeIndex:g.rec.outcomeIndex,
               size: g.size, avgPrice: null,
               curPrice: g.size ? g.payout / g.size : null,
               initialValue: null, currentValue: 0, payout: g.payout,
@@ -1760,18 +1902,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         // positions fully sold before resolution never appear in /positions —
         // /closed-positions carries them. It also re-lists redeemed and
         // still-held markets, so only rows not already represented are added.
-        const closedP = pagedFetch(
-          page => "https://data-api.polymarket.com/closed-positions?" + new URLSearchParams({user:addr, limit:"500", offset:String(page*500)}).toString(),
-          j => j)
-          .then(r => ({rows: r.out.map(mapClosedPosition), truncated: r.truncated}))
+        const closedP = fetchClosedPositions(addr)
           .catch(() => ({rows:[], truncated:false})); // additive, like combos
         const [singles, combos, redeems, closed] = await Promise.all([singlesP, combosP, redeemsP, closedP]);
         // key on market + outcome: selling one side of a market must still show
         // when the other side is held or was redeemed
-        const posKeyOf = p => ((p.conditionId || "") + "|" + (p.outcome || "")).toLowerCase();
-        const seenCond = new Set(singles.out.concat(redeems.rows).map(posKeyOf));
-        const closedRows = closed.rows.filter(p => (p.conditionId || "") && !seenCond.has(posKeyOf(p)));
-        return {ok:true, rows: singles.out.concat(combos.rows, redeems.rows, closedRows),
+        const closedByKey = new Map(closed.rows.map(p => [positionGroupKey(p), p]));
+        const redeemedRows = redeems.rows.map(p => {
+          const history = closedByKey.get(positionGroupKey(p));
+          return history ? {...history, ...p, avgPrice:history.avgPrice, initialValue:history.initialValue,
+            cashPnl:history.cashPnl, percentPnl:history.percentPnl, isClosed:false} : p;
+        });
+        const seenCond = new Set(singles.out.concat(redeemedRows).map(positionGroupKey));
+        const closedRows = closed.rows.filter(p => !seenCond.has(positionGroupKey(p)));
+        return {ok:true, rows: singles.out.concat(combos.rows, redeemedRows, closedRows),
           truncated: singles.truncated || combos.truncated || redeems.truncated || closed.truncated};
       }catch(e){
         return {ok:false, addr, err:e.message};
@@ -1792,7 +1936,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // basePositions is the set BEFORE status filtering — the chip counts read it.
   function searchPositions(){
     const q = $("searchBox").value.trim().toLowerCase();
-    return allPositions.filter(p => !q
+    return positionViewRows().filter(p => !q
       || (p.title||"").toLowerCase().includes(q)
       || (p.outcome||"").toLowerCase().includes(q)
       || (p.slug||"").toLowerCase().includes(q));
@@ -1819,8 +1963,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   //                 an auto-settled combo win
   //   open        — market still in progress
   //   sold        — the whole position was sold off before resolution
-  const POS_STATUS_LABEL = {open:"OPEN", loss:"LOSS", redeemed:"REDEEMED", notredeemed:"NOT REDEEMED", sold:"SOLD"};
+  const POS_STATUS_LABEL = {open:"OPEN", loss:"LOSS", redeemed:"REDEEMED", notredeemed:"NOT REDEEMED", sold:"SOLD", history:"HISTORY"};
   function posStatus(p){
+    if(p.isActivityOnly) return "history";
     if(p.isClosed) return "sold";
     if(p.isRedeemed) return "redeemed";
     const value = Number(p.currentValue) || 0;
@@ -1848,20 +1993,22 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         return st === "notredeemed" ? ' <span class="badge buy">NOT REDEEMED</span>'
           : st === "redeemed" ? ' <span class="badge neutral">REDEEMED</span>'
           : st === "loss" ? ' <span class="badge sell">LOST</span>'
-          : st === "sold" ? ' <span class="badge neutral">SOLD</span>' : "";
+          : st === "sold" ? ' <span class="badge neutral">SOLD</span>'
+          : st === "history" ? ' <span class="badge neutral">HISTORY</span>' : "";
       })()+"</td>",
-      '<td class="num mono">'+fmtNum(p.size)+"</td>",
+      '<td class="num mono">'+(p.size != null ? fmtNum(p.size) : "—")+"</td>",
       '<td class="num mono">'+(p.avgPrice!=null ? Number(p.avgPrice).toFixed(3) : "—")+"</td>",
       '<td class="num mono">'+(p.curPrice!=null ? Number(p.curPrice).toFixed(3) : "—")+"</td>",
       '<td class="num mono">'+(p.initialValue != null && Number.isFinite(Number(p.initialValue)) ? "$"+fmtUsd(p.initialValue) : "—")+"</td>",
       (p.isRedeemed
         ? '<td class="num mono" title="Payout received at redemption">$'+fmtUsd(p.payout)+"</td>"
-        : '<td class="num mono">$'+fmtUsd(p.currentValue)+"</td>"),
-      (p.isRedeemed
+        : '<td class="num mono">'+(p.currentValue != null ? "$"+fmtUsd(p.currentValue) : "—")+"</td>"),
+      (p.cashPnl == null
         ? '<td class="num mono">—</td>'
         : '<td class="num mono '+(pnl >= 0 ? "pos" : "neg")+'">'+(pnl < 0 ? "-$" : "$")+fmtUsd(Math.abs(pnl))
-          + (isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>"),
-      '<td class="mono">'+esc(p.endDate||"")+"</td>"
+          + (p.percentPnl != null && isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>"),
+      '<td class="mono">'+esc(p.endDate||"")+"</td>",
+      '<td class="num mono pos-fee-cell" data-pi="'+idx+'" title="Estimated taker fees for trades in the selected search window and date range; makers pay no fee">'+positionFeeText(p)+"</td>"
     ];
     return '<tr class="pos-row'+(expandedPos.has(posKey(p))?" expanded":"")+'" data-pi="'+idx+'">'
       + posCols.order.map(i => cells[i]).join("") + "</tr>";
@@ -1870,14 +2017,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(!$("posWrap").classList.contains("active")) return;
     const q = $("searchBox").value.trim();
     // progressive feed chunks re-dispatch here constantly — skip identical re-renders
-    const key = [posRunSeq, posLoading, posLoaded, posError, allPositions.length, q.toLowerCase(),
+    const key = [posRunSeq, posLoading, posLoaded, posError, allPositions.length, allRecords.length,
+      lastParams.start, lastParams.end, $("dateFrom").value, $("dateTo").value, q.toLowerCase(),
       [...catFilter].sort().join(","), [...posStatusFilter].sort().join(",")].join("|");
     if(key === posRenderKey) return;
     posRenderKey = key;
     // faceted chip counts: each family counts against the OTHER family's selection
     // (status counts respect Single/Combo; Single/Combo counts respect status)
-    const counts = {open:0, notredeemed:0, redeemed:0, loss:0, sold:0};
+    const counts = {open:0, notredeemed:0, redeemed:0, loss:0, sold:0, history:0};
     basePositions().forEach(p => counts[posStatus(p)]++);
+    $("allPositionStatuses").classList.toggle("on", !posStatusFilter.size);
+    $("allPositionStatuses").querySelector(".cnt").textContent = Object.values(counts).reduce((s,n) => s+n, 0).toLocaleString();
     document.querySelectorAll(".fchip[data-pstat] .cnt").forEach(el =>
       el.textContent = (counts[el.parentElement.dataset.pstat] || 0).toLocaleString());
     const searchRows = searchPositions();
@@ -1888,6 +2038,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     document.querySelectorAll('.fchip[data-cat="single"] .cnt, .fchip[data-cat="combo"] .cnt').forEach(el =>
       el.textContent = (catCounts[el.parentElement.dataset.cat] || 0).toLocaleString());
     const rows = visiblePositions();
+    loadFeesFor(rows.flatMap(positionTradesFor));
     setPosNote(buildPosNote(rows, q));
     posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
     hideTooltip(); // rows are being replaced under any open tooltip
@@ -1906,23 +2057,28 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(posLoading) note = "Loading positions…";
     else if(posError) note = "Could not load positions — " + posError + ". Run the search again to retry.";
     else if(!posLoaded) note = currentWallets.length ? "" : "Check a wallet first — positions load from the current search.";
-    else if(!rows.length) note = q ? "No positions match the search." : "No open positions.";
+    else if(!rows.length) note = fetching ? "Loading activity for the selected window…"
+      : "No positions match the selected time window and filters.";
     else{
       const val = rows.reduce((s,p)=>s+(Number(p.currentValue)||0),0);
       const pnl = rows.reduce((s,p)=>s+(Number(p.cashPnl)||0),0);
       const redeem = rows.filter(p=>p.redeemable).length;
       const paid = rows.reduce((s,p)=>s+(Number(p.payout)||0),0);
+      const unavailable = rows.filter(p => p.isActivityOnly).length;
       note = rows.length.toLocaleString() + " position" + (rows.length===1?"":"s")
-        + " · current value $" + fmtUsd(val)
-        + " · PnL " + (pnl < 0 ? "-$" : "$") + fmtUsd(Math.abs(pnl))
+        + (Number(lastParams.start) > 1 ? " in search window" : " across all time")
+        + " · " + (unavailable ? "known " : "current ") + "value $" + fmtUsd(val)
+        + " · " + (unavailable ? "known " : "") + "PnL " + (pnl < 0 ? "-$" : "$") + fmtUsd(Math.abs(pnl))
         + (paid ? " · redeemed $" + fmtUsd(paid) : "")
-        + (redeem ? " · " + redeem.toLocaleString() + " not redeemed" : "");
+        + (redeem ? " · " + redeem.toLocaleString() + " not redeemed" : "")
+        + (unavailable ? " · " + unavailable + " position snapshots unavailable (History)" : "");
       if(posTruncated) note += " · limited to the first " + (POS_MAX_PAGES*500).toLocaleString() + " positions per wallet";
       if(rows.length > POS_VIEW_CAP) note += " · showing the top " + POS_VIEW_CAP.toLocaleString() + " by value — narrow the search or download the CSV for all";
     }
     if(posLoaded && posFailedWallets.length)
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
     if(livePositionError) note += (note ? " · " : "") + livePositionError;
+    if(feedTruncated) note += " · activity history is incomplete; some positions or fees may be missing";
     return note;
   }
   function setPosNote(note){
@@ -1937,6 +2093,91 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let liveBusy = false, liveActive = false;
   let livePositionError = "";
   let nextLiveRefreshAt = 0;
+  let liveActivityCheckedAt = 0;
+  let nextHistoryRefreshAt = 0;
+  function activityRecordKey(r){
+    return [(r.proxyWallet || "").toLowerCase(),r.type,r.transactionHash,r.timestamp,r.asset,r.conditionId,r.outcome,r.side,r.size,r.price].join("|");
+  }
+  async function refreshPositionActivity(myRun){
+    if(fetching) return {changed:false, failed:false}; // initial feed already fills the same range
+    const until = Math.floor(Date.now()/1000);
+    const start = Math.max(Number(lastParams.start) || 1, liveActivityCheckedAt - 60);
+    const results = await Promise.all(currentWallets.map(async addr => {
+      const rows = [];
+      try{
+        for(let page = 0; page <= 10; page++){
+          const res = await fetchWithRetry(API + "?" + new URLSearchParams({user:addr,
+            start:String(start), end:String(until), limit:"500", offset:String(page*500)}), 2, 8000, {cache:"no-store"});
+          if(!res.ok) throw new Error("HTTP " + res.status);
+          const batch = await res.json();
+          if(!Array.isArray(batch)) throw new Error("Invalid activity response");
+          rows.push(...batch.map(r => ({...r, proxyWallet:addr})));
+          if(batch.length < 500) return {rows, failed:false};
+        }
+      }catch(e){}
+      return {rows, failed:true};
+    }));
+    if(myRun !== posRunSeq) return null;
+    const seen = new Set(allRecords.map(activityRecordKey));
+    let changed = false;
+    for(const result of results) for(const r of result.rows){
+      if(!["TRADE","REDEEM","SPLIT","MERGE","CONVERSION"].includes(r.type)) continue;
+      const key = activityRecordKey(r);
+      if(seen.has(key)) continue;
+      seen.add(key); allRecords.push(r); changed = true;
+      if(r.conditionId) posHistCache.delete(posKey(r));
+    }
+    const failed = results.some(r => r.failed);
+    if(!failed) liveActivityCheckedAt = until;
+    if(changed){
+      allRecords.sort((a,b) => (b.timestamp||0)-(a.timestamp||0));
+      positionGroupCache = null; posRenderKey = null;
+      applySearch(); renderSummary(); loadFeesFor(filteredRecords);
+    }
+    return {changed, failed};
+  }
+  async function refreshPositionHistory(myRun){
+    const snapshots = await Promise.all(currentWallets.map(async addr => {
+      try{ return {addr, ...await fetchClosedPositions(addr)}; }
+      catch(e){ return {addr, failed:true}; }
+    }));
+    if(myRun !== posRunSeq) return null;
+    const held = new Set(allPositions.filter(p => !p.isClosed && !p.isRedeemed).map(positionGroupKey));
+    const existing = new Map(allPositions.map(p => [positionGroupKey(p), p]));
+    let changed = false;
+    for(const snapshot of snapshots){
+      if(snapshot.failed) continue;
+      if(snapshot.truncated) posTruncated = true;
+      for(const p of snapshot.rows){
+        const key = positionGroupKey(p);
+        if(held.has(key)) continue;
+        const old = existing.get(key);
+        const redeems = allRecords.filter(r => r.type === "REDEEM" && (positionGroupKey(r) === key
+          || (positionOutcomeKey(r) && positionOutcomeKey(r) === positionOutcomeKey(p))));
+        if(old?.isRedeemed || redeems.length){
+          p.isClosed = false; p.isRedeemed = true;
+          p.payout = old?.isRedeemed ? old.payout : redeems.reduce((s,r) => s + (Number(r.usdcSize)||0), 0);
+        }
+        if(old){
+          if(Object.keys(p).some(k => !Object.is(old[k], p[k]))) changed = true;
+          Object.assign(old, p);
+        }else { allPositions.push(p); existing.set(key, p); changed = true; }
+      }
+    }
+    return {changed, failed:snapshots.some(s => s.failed || s.truncated)};
+  }
+  async function refreshPortfolioValue(myRun){
+    try{
+      const values = await Promise.all(currentWallets.map(async addr => {
+        const res = await fetchWithRetry("https://data-api.polymarket.com/value?user=" + addr, 2, 8000, {cache:"no-store"});
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        const rows = await res.json(), value = rows?.[0]?.value;
+        if(value == null || !Number.isFinite(Number(value))) throw new Error("Invalid portfolio value");
+        return Number(value);
+      }));
+      if(myRun === posRunSeq) $("stPortfolio").textContent = "$" + fmtUsd(values.reduce((s,v) => s+v, 0));
+    }catch(e){ if(myRun === posRunSeq) $("stPortfolio").textContent = "–"; }
+  }
   function positionSnapshotKey(p){
     return ((p.proxyWallet || "") + "|" + (p.asset || ((p.conditionId || "") + "|" + (p.outcome || "")))).toLowerCase();
   }
@@ -2026,9 +2267,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     liveBusy = true;
     updateRefreshCountdown();
     try{
-      const holdings = await refreshPositionHoldings(myRun);
-      if(!holdings) return;
+      const [holdings, activity] = await Promise.all([refreshPositionHoldings(myRun), refreshPositionActivity(myRun)]);
+      if(!holdings || !activity) return;
       const {changed, structureChanged, failedWallets} = holdings;
+      const needsHistory = structureChanged || activity.changed || (Date.now() >= nextHistoryRefreshAt
+        && positionViewRows().some(p => p.isActivityOnly && !p.isCombo && positionTradesFor(p).length));
+      const history = needsHistory ? await refreshPositionHistory(myRun) : {failed:false};
+      if(!history || myRun !== posRunSeq) return;
+      if(needsHistory) nextHistoryRefreshAt = Date.now() + 60000;
       let totalDelta = holdings.totalDelta;
       const targets = allPositions.filter(p => !p.isCombo && p.asset && posStatus(p) === "open");
       const tokens = [...new Set(targets.map(p => String(p.asset)))].slice(0, LIVE_MAX_TOKENS);
@@ -2058,10 +2304,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       }
       livePositionError = failedWallets.length
         ? "Holdings refresh failed for " + failedWallets.map(short).join(", ") + "; showing last known holdings"
+        : activity.failed ? "Activity refresh incomplete; new positions and fees may be delayed"
+        : history.failed ? "Position history refresh incomplete; some snapshots may be unavailable"
         : parts.some(p => p.status === "rejected") ? "Live prices unavailable; showing latest reported prices" : "";
       liveActive = !livePositionError;
-      if(structureChanged){ posRenderKey = null; renderPositions(); }
+      if(structureChanged || activity.changed || history.changed){ posRenderKey = null; renderPositions(); }
       applyLivePrices(changed, totalDelta);
+      refreshPortfolioValue(myRun);
     }catch(e){
       if(myRun === posRunSeq){
         liveActive = false;
@@ -2140,13 +2389,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           pnl >= ch.oldPnl ? "px-up" : "px-down");
       }
     });
-    // the stats card's Portfolio value drifts live with the same deltas
-    if(totalDelta){
-      const el = $("stPortfolio");
-      const curTxt = parseFloat((el.textContent || "").replace(/[$,]/g, ""));
-      if(isFinite(curTxt))
-        tweenCell(el, curTxt, curTxt + totalDelta, v => "$" + fmtUsd(v), totalDelta > 0 ? "px-up" : "px-down");
-    }
+    // Portfolio value comes from an absolute /value snapshot. Adding position
+    // deltas to a separately fetched total could double-count sales below zero.
     setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
   }
   function tickLiveRefresh(){
@@ -2191,10 +2435,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   setInterval(pollBalance, LIVE_MS);
 
   function positionsCsv(rows){
-    const cols = ["proxyWallet","title","outcome","status","size","avgPrice","curPrice","initialValue","currentValue","payout","cashPnl","percentPnl","realizedPnl","endDate","conditionId"];
+    const cols = ["proxyWallet","title","outcome","status","size","avgPrice","curPrice","initialValue","feeEstimate","currentValue","payout","cashPnl","percentPnl","realizedPnl","endDate","conditionId"];
     // csvCell carries the spreadsheet formula-injection guard used by the activity CSV
     return cols.join(",") + "\n" + rows.map(p =>
-      cols.map(c => csvCell(c === "status" ? posStatus(p) : p[c])).join(",")).join("\n");
+      cols.map(c => {
+        if(c === "feeEstimate"){
+          const fee = positionFeeEstimate(p);
+          return csvCell(fee === undefined ? "" : fee.toFixed(6));
+        }
+        const value = c === "status" ? posStatus(p) : p[c];
+        return csvCell(typeof value === "number" && !Number.isFinite(value) ? "" : value);
+      }).join(",")).join("\n");
   }
 
   // pretty JSON with syntax highlighting (capped for DOM safety)
@@ -2392,6 +2643,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     else if(p.curPrice != null) bits.push("now " + Number(p.curPrice).toFixed(3));
     bits.push(POS_STATUS_LABEL[posStatus(p)] || posStatus(p).toUpperCase());
     h += '<div class="tt-sub">' + bits.join(" · ") + "</div>";
+    if(p.isActivityOnly) return h + '<div class="tt-meta">Activity exists in the selected window. Current holdings and position results are unavailable; fees use the loaded trades.</div>';
     if(legs){
       h += legsHtml(legs, splitComboTitle(p.title));
       // leg colors show the LEGS' results; this line resolves them against the
@@ -2599,12 +2851,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   $("tabJson").addEventListener("click", showJson);
   $("loadMoreBtn").addEventListener("click", ()=>renderTableChunk(false));
   function refreshResults(){
-    if(!allRecords.length) return;
+    if(!allRecords.length){ renderPositions(); return; }
     applySearch();
     renderSummary();
     loadFeesFor(filteredRecords); // async; resolves the Fees (est.) total
     $("emptyBox").classList.toggle("active", !filteredRecords.length);
-    if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
+    if($("tabPositions").classList.contains("on")) renderPositions();
+    else if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
   }
 
   // targeted server-side type query, merged with dedup — only when the feed was
@@ -2659,6 +2912,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     renderPositions(); // Single/Combo also narrow the positions view
   }
   // position status chips (multi-select, positions view only)
+  $("allPositionStatuses").addEventListener("click", () => {
+    posStatusFilter = new Set();
+    document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.remove("on"));
+    renderPositions();
+  });
   document.querySelectorAll(".fchip[data-pstat]").forEach(b =>
     b.addEventListener("click", ()=>{
       const v = b.dataset.pstat;
@@ -2712,12 +2970,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // view is active. Each view has its own config: order maps display position ->
   // original column index; the header row, body cells, and nth-child hiding CSS
   // all follow it, persisted per view.
-  function makeTableCfg(colNames, wrapId, orderKey, hiddenKey, onChange){
+  function makeTableCfg(colNames, wrapId, orderKey, hiddenKey, onChange, defaultOrder = colNames.map((_, i) => i)){
     const headRow = document.querySelector("#" + wrapId + " thead tr");
     const cfg = {
-      colNames, wrapId, orderKey, hiddenKey, onChange,
+      colNames, wrapId, orderKey, hiddenKey, onChange, defaultOrder,
       headRow, origThs: Array.from(headRow.children),
-      order: colNames.map((_, i) => i),
+      order: defaultOrder.slice(),
       hidden: new Set(),
       style: document.createElement("style")
     };
@@ -2748,10 +3006,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       localStorage.setItem("pmac_pos_col_order", JSON.stringify(order));
     }
   }catch(e){}
+  // Fees is logical column 10, preserving all existing live-update and hidden indices.
+  try{
+    const saved = JSON.parse(localStorage.getItem("pmac_pos_col_order"));
+    if(Array.isArray(saved) && saved.length === 10
+      && [...saved].sort((a,b)=>a-b).every((v,i)=>v===i)){
+      saved.splice(saved.indexOf(7), 0, 10);
+      localStorage.setItem("pmac_pos_col_order", JSON.stringify(saved));
+    }
+  }catch(e){}
   const posCols = makeTableCfg(
-    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Cost","Value","PnL","End date"],
+    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Cost","Value","PnL","End date","Fees (est.)"],
     "posWrap", "pmac_pos_col_order", "pmac_pos_hidden_cols",
-    () => { posRenderKey = null; renderPositions(); });
+    () => { posRenderKey = null; renderPositions(); }, [0,1,2,3,4,5,6,10,7,8,9]);
   const activeColsCfg = () => $("tabPositions").classList.contains("on") ? posCols : actCols;
   function updateColsDot(){
     $("sideTab").classList.toggle("has-hidden", activeColsCfg().hidden.size > 0);
@@ -2787,7 +3054,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   });
   $("colsReset").addEventListener("click", ()=>{
     const cfg = activeColsCfg();
-    cfg.order = cfg.colNames.map((_, i) => i);
+    cfg.order = cfg.defaultOrder.slice();
     cfg.hidden = new Set();
     cfgApplyOrder(cfg);
   });
@@ -3089,8 +3356,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     marketFilter = null; renderChips();
     catFilter = new Set();
     updateFchips();
-    posStatusFilter = new Set(["open"]); // Open is the default status selection
-    document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.toggle("on", b.dataset.pstat === "open"));
+    posStatusFilter = new Set(); // show every matching market; chips narrow by status
+    $("allPositionStatuses").classList.add("on");
+    document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.remove("on"));
   }
   $("resetBtn").addEventListener("click", ()=>{
     resetFilters();

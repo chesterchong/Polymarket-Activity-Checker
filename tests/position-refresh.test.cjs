@@ -71,6 +71,7 @@ function harness(options = {}) {
     liveActive: false,
     livePositionError: '',
     nextLiveRefreshAt: 0,
+    nextHistoryRefreshAt: 0,
     document: {hidden: false},
     sleep: async () => {},
     fetch: async (url, init) => {
@@ -85,11 +86,16 @@ function harness(options = {}) {
       return elements.get(id);
     },
     renderPositions: () => events.push(['render']),
+    refreshPositionActivity: async () => ({changed: false, failed: false}),
+    refreshPositionHistory: async () => ({failed: false}),
+    refreshPortfolioValue: async () => {},
     updateRefreshCountdown: () => events.push(['countdown']),
     applyLivePrices: (changes, delta) => events.push(['apply', changes, delta]),
     setPosNote: note => events.push(['note', note]),
     buildPosNote: () => '',
     visiblePositions: () => context.allPositions,
+    positionViewRows: () => context.allPositions,
+    positionTradesFor: () => [],
   });
   const names = ['fetchWithRetry', 'fetchCurrentPositions', 'positionSnapshotKey', 'rememberPositionChange', 'refreshPositionHoldings', 'posStatus', 'pollLivePrices'];
   vm.runInContext(['posKey', 'short', 'fmtNum', 'fmtUsd'].map(productionConstant).concat(names.map(productionFunction)).join('\n'), context, {filename: 'index.html extracted functions'});
