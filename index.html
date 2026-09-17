@@ -130,7 +130,7 @@ select:focus-visible,.btn:focus-visible,textarea:focus-visible,.tab:focus-visibl
 .stat .value.neg{color:var(--destructive);}
 .stat .label span{text-transform:none; letter-spacing:0;}
 
-/* results toolbar: one card, two rows, a consistent 32px pill control language */
+/* results toolbar: one card, three rows, a consistent 32px pill control language */
 .results-bar{
   display:none; flex-direction:column; gap:10px;
   border:1px solid var(--border); background:var(--card); padding:12px 14px;
@@ -588,6 +588,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="fchip" data-pstat="open" title="Open positions, including winnings not yet redeemed">Open <span class="cnt">0</span></button>
           <button type="button" class="fchip" data-pstat="close" title="Closed positions: loss, redeemed, or fully sold">Close <span class="cnt">0</span></button>
         </div>
+      </div>
+      <div class="rb-row">
         <span class="rb-group">
           <span class="date-range" title="Show records between these dates">
             <span class="dr-label">Date</span>
