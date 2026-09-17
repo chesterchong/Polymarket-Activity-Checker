@@ -505,7 +505,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <p class="sub">Paste one or more addresses, separated by commas or new lines.</p>
       </div>
       <div class="header-actions">
-      <button type="button" class="icon-btn" id="saveAddressesBtn" title="Save addresses in this browser" aria-label="Save addresses in this browser" aria-pressed="false">
+      <button type="button" class="icon-btn" id="saveAddressesBtn" title="Save addresses in this browser" aria-label="Save addresses in this browser">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
       </button>
       <button type="button" class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
@@ -823,8 +823,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return {valid, invalid};
   }
 
-  // Saved addresses are opt-in; discard the old automatic search history.
-  try{ localStorage.removeItem("pmac_addr_history"); }catch(e){}
+  // Saved addresses change only when a valid list is explicitly saved.
   const SAVED_ADDRESSES_KEY = "pmac_saved_addresses";
   let savedAddressText = "";
   try{
@@ -844,9 +843,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function renderSavedAddresses(message = "", isError = false){
     const input = $("addrInput"), button = $("saveAddressesBtn"), note = $("addressNote");
     const saved = currentAddressesAreSaved();
-    const label = saved ? "Forget saved addresses" : savedAddressText ? "Update saved addresses in this browser" : "Save addresses in this browser";
+    const label = savedAddressText && !saved ? "Overwrite saved addresses in this browser" : "Save addresses in this browser";
     button.classList.toggle("on", saved);
-    button.setAttribute("aria-pressed", String(saved));
     button.setAttribute("aria-label", label);
     button.title = label;
     input.placeholder = savedAddressText || "0x...";
@@ -857,18 +855,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     note.hidden = !note.textContent;
   }
   $("saveAddressesBtn").addEventListener("click", () => {
-    const remove = currentAddressesAreSaved();
+    if(!$("addrInput").value.trim() && savedAddressText){
+      renderSavedAddresses("Saved addresses kept. Enter new addresses to overwrite them.");
+      return;
+    }
     const {valid, invalid} = parseAddresses($("addrInput").value);
-    if(!remove && (!valid.length || invalid.length)){
+    if(!valid.length || invalid.length){
       renderSavedAddresses("Enter valid 0x wallet addresses before saving.", true);
       $("addrInput").focus();
       return;
     }
     try{
-      if(remove) localStorage.removeItem(SAVED_ADDRESSES_KEY);
-      else localStorage.setItem(SAVED_ADDRESSES_KEY, JSON.stringify(valid));
-      savedAddressText = remove ? "" : valid.join("\n");
-      renderSavedAddresses(remove ? "Saved addresses removed from this browser." : "Addresses saved in this browser. Clear the field or return later, then press Tab to fill.");
+      localStorage.setItem(SAVED_ADDRESSES_KEY, JSON.stringify(valid));
+      savedAddressText = valid.join("\n");
+      renderSavedAddresses("Addresses saved in this browser. Clear the field or return later, then press Tab to fill.");
     }catch(e){
       renderSavedAddresses("Browser storage is unavailable. Saved addresses could not be changed.", true);
     }

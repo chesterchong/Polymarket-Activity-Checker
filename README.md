@@ -17,7 +17,7 @@ A browser-based tool for viewing public Polymarket wallet activity, positions, b
 
 No wallet connection, private key, seed phrase, or transaction signing is required. The app reads public data and does not place trades.
 
-To remember an address or a list of addresses, click the bookmark button beside the theme button. They are saved only in this browser's local storage. On your next visit, the address field shows them as a gray suggestion; focus the field and press **Tab** to fill it, then click **Check activity**. Edit the field and click the bookmark to update the saved list, or click the highlighted bookmark to forget it. Searching alone does not save addresses.
+To remember an address or a list of addresses, click the bookmark button beside the theme button. They are saved only in this browser's local storage. On your next visit, the address field shows them as a gray suggestion; focus the field and press **Tab** to fill it, then click **Check activity**. Edit the field and click the bookmark to overwrite the saved list. Clicking again or with an empty field keeps your saved addresses; the button never removes them. Searching alone does not save addresses.
 
 ## Reading positions and statistics
 
