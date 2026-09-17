@@ -584,14 +584,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="fchip" data-cat="withdrawal" title="USDC withdrawals, including transfers sent to other users">Withdrawal</button>
           <button type="button" class="fchip" data-cat="rewards" title="Rewards, yield, rebates and referral payouts">Rewards</button>
         </div>
-        <div class="fchips pos-only" role="group" aria-label="Position status">
-          <button type="button" class="fchip on" id="allPositionStatuses" title="Show all position statuses in the selected window">All <span class="cnt">0</span></button>
-          <button type="button" class="fchip" data-pstat="open" title="Markets still in progress">Open <span class="cnt">0</span></button>
-          <button type="button" class="fchip" data-pstat="notredeemed" title="Won but the payout has not been claimed yet">Not redeemed <span class="cnt">0</span></button>
-          <button type="button" class="fchip" data-pstat="redeemed" title="Payouts already claimed (from the wallet's redeem history) or auto-settled combo wins">Redeemed <span class="cnt">0</span></button>
-          <button type="button" class="fchip" data-pstat="loss" title="Resolved as a loss, or valued at $0">Loss <span class="cnt">0</span></button>
-          <button type="button" class="fchip" data-pstat="sold" title="Fully sold before resolution — no shares held; PnL is the realized result">Sold <span class="cnt">0</span></button>
-          <button type="button" class="fchip" data-pstat="history" title="Activity found, but the position snapshot is unavailable">History <span class="cnt">0</span></button>
+        <div class="fchips pos-only" role="group" aria-label="Position status" title="Select Open or Close to filter; select neither or both to show all positions">
+          <button type="button" class="fchip" data-pstat="open" title="Open positions, including winnings not yet redeemed">Open <span class="cnt">0</span></button>
+          <button type="button" class="fchip" data-pstat="close" title="Closed positions: loss, redeemed, or fully sold">Close <span class="cnt">0</span></button>
         </div>
         <span class="rb-group">
           <span class="date-range" title="Show records between these dates">
@@ -1949,7 +1944,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
   function visiblePositions(){
     let rows = basePositions();
-    if(posStatusFilter.size) rows = rows.filter(p => posStatusFilter.has(posStatus(p)));
+    rows = rows.filter(matchesPositionStatus);
     // redeemed/sold rows have no current value — payout / cost basis is the comparable number
     const valOf = p => p.isRedeemed ? (Number(p.payout)||0)
       : p.isClosed ? (Number(p.initialValue)||0) : (Number(p.currentValue)||0);
@@ -1976,6 +1971,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       : (p.redeemable && (Number(p.curPrice)||0) >= 0.5);
     if(resolvedWin) return p.redeemable ? "notredeemed" : "redeemed";
     return "open";
+  }
+  // Filter groups are broader than the detailed status used by rows and live prices.
+  function positionStatusGroup(p){
+    const status = posStatus(p);
+    if(status === "open" || status === "notredeemed") return "open";
+    if(status === "loss" || status === "redeemed" || status === "sold") return "close";
+    return null; // activity-only rows have no known position status yet
+  }
+  function matchesPositionStatus(p){
+    // Preserve unclassified activity rows in the unfiltered view instead of
+    // calling them open or closed without an authoritative snapshot.
+    if(!posStatusFilter.size || (posStatusFilter.has("open") && posStatusFilter.has("close"))) return true;
+    return posStatusFilter.has(positionStatusGroup(p));
   }
   function posRowHtml(p, idx){
     const pnl = Number(p.cashPnl)||0;
@@ -2024,15 +2032,15 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posRenderKey = key;
     // faceted chip counts: each family counts against the OTHER family's selection
     // (status counts respect Single/Combo; Single/Combo counts respect status)
-    const counts = {open:0, notredeemed:0, redeemed:0, loss:0, sold:0, history:0};
-    basePositions().forEach(p => counts[posStatus(p)]++);
-    $("allPositionStatuses").classList.toggle("on", !posStatusFilter.size);
-    $("allPositionStatuses").querySelector(".cnt").textContent = Object.values(counts).reduce((s,n) => s+n, 0).toLocaleString();
+    const counts = {open:0, close:0};
+    basePositions().forEach(p => {
+      const group = positionStatusGroup(p);
+      if(group) counts[group]++;
+    });
     document.querySelectorAll(".fchip[data-pstat] .cnt").forEach(el =>
       el.textContent = (counts[el.parentElement.dataset.pstat] || 0).toLocaleString());
     const searchRows = searchPositions();
-    const statusApplied = posStatusFilter.size
-      ? searchRows.filter(p => posStatusFilter.has(posStatus(p))) : searchRows;
+    const statusApplied = searchRows.filter(matchesPositionStatus);
     const catCounts = {single:0, combo:0};
     statusApplied.forEach(p => catCounts[p.isCombo ? "combo" : "single"]++);
     document.querySelectorAll('.fchip[data-cat="single"] .cnt, .fchip[data-cat="combo"] .cnt').forEach(el =>
@@ -2062,7 +2070,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     else{
       const val = rows.reduce((s,p)=>s+(Number(p.currentValue)||0),0);
       const pnl = rows.reduce((s,p)=>s+(Number(p.cashPnl)||0),0);
-      const redeem = rows.filter(p=>p.redeemable).length;
+      const redeem = rows.filter(p=>posStatus(p) === "notredeemed").length;
       const paid = rows.reduce((s,p)=>s+(Number(p.payout)||0),0);
       const unavailable = rows.filter(p => p.isActivityOnly).length;
       note = rows.length.toLocaleString() + " position" + (rows.length===1?"":"s")
@@ -2912,11 +2920,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     renderPositions(); // Single/Combo also narrow the positions view
   }
   // position status chips (multi-select, positions view only)
-  $("allPositionStatuses").addEventListener("click", () => {
-    posStatusFilter = new Set();
-    document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.remove("on"));
-    renderPositions();
-  });
   document.querySelectorAll(".fchip[data-pstat]").forEach(b =>
     b.addEventListener("click", ()=>{
       const v = b.dataset.pstat;
@@ -3357,7 +3360,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     catFilter = new Set();
     updateFchips();
     posStatusFilter = new Set(); // show every matching market; chips narrow by status
-    $("allPositionStatuses").classList.add("on");
     document.querySelectorAll(".fchip[data-pstat]").forEach(b => b.classList.remove("on"));
   }
   $("resetBtn").addEventListener("click", ()=>{

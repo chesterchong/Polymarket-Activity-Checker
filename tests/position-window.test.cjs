@@ -67,7 +67,7 @@ function harness(options = {}) {
       return elements.get(id);
     },
   });
-  const names = ['zonedMidnight', 'zonedDayBound', 'dateBound', 'positionGroupKey', 'positionOutcomeKey', 'positionActivityGroups', 'positionGroupFor', 'positionTradesFor', 'positionViewRows', 'searchPositions', 'basePositions', 'visiblePositions', 'posStatus', 'fetchWithRetry', 'fetchClosedPositions', 'mapClosedPosition', 'computeFeeFor', 'feeUnavailable', 'positionFeeEstimate', 'positionFeeText', 'positionsCsv'];
+  const names = ['zonedMidnight', 'zonedDayBound', 'dateBound', 'positionGroupKey', 'positionOutcomeKey', 'positionActivityGroups', 'positionGroupFor', 'positionTradesFor', 'positionViewRows', 'searchPositions', 'basePositions', 'visiblePositions', 'posStatus', 'positionStatusGroup', 'matchesPositionStatus', 'fetchWithRetry', 'fetchClosedPositions', 'mapClosedPosition', 'computeFeeFor', 'feeUnavailable', 'positionFeeEstimate', 'positionFeeText', 'positionsCsv'];
   const constants = [html.match(/^  const fmtUsd = .+$/m)[0], html.match(/^  const csvCell = [^]*?^  };/m)[0]];
   vm.runInContext(constants.concat(names.map(productionFunction)).join('\n'), context, {filename: 'index.html extracted position window functions'});
   return {context, elements, calls};
@@ -401,4 +401,26 @@ test('fee loading retries missing IDs among closed markets and never labels fail
   assert.equal(failed.context.positionFeeText(position()), 'Unavailable');
   assert.equal(failed.context.feeCache.get('mouz-nrg').unavailable, true);
   assert.equal(failed.context.feeInflight.size, 0);
+});
+
+test('Open includes not redeemed and Close combines loss, redeemed and sold without reclassifying unknown history', () => {
+  const {context} = harness();
+  const rows = [
+    position(),
+    position({redeemable: true, curPrice: 1}),
+    position({redeemable: true, curPrice: 0, currentValue: 0}),
+    position({isRedeemed: true, currentValue: 0}),
+    position({isClosed: true, currentValue: 0}),
+    position({isActivityOnly: true, size: null, currentValue: null}),
+  ];
+  assert.deepEqual(rows.map(p => context.positionStatusGroup(p)), ['open', 'open', 'close', 'close', 'close', null]);
+  assert.equal(context.posStatus(rows[1]), 'notredeemed');
+  context.posStatusFilter = new Set(['open']);
+  assert.deepEqual(rows.filter(p => context.matchesPositionStatus(p)), rows.slice(0, 2));
+  context.posStatusFilter = new Set(['close']);
+  assert.deepEqual(rows.filter(p => context.matchesPositionStatus(p)), rows.slice(2, 5));
+  context.posStatusFilter = new Set(['open', 'close']);
+  assert.equal(rows.filter(p => context.matchesPositionStatus(p)).length, 6);
+  context.posStatusFilter = new Set();
+  assert.equal(rows.filter(p => context.matchesPositionStatus(p)).length, 6);
 });

@@ -11,7 +11,7 @@ A browser-based tool for viewing public Polymarket wallet activity, positions, b
 3. Click **Check activity** and wait for the results. Records appear as they load.
 4. Select a results tab:
    - **Activity** shows trades, funding transfers, redemptions, rewards, and other supported activity. Filter by type, buy/sell side, category, date, or market text.
-   - **Active Position** shows markets with activity in the searched time window, grouped by wallet and outcome/token. **All** statuses are shown by default. Use **Open**, **Not redeemed**, **Redeemed**, **Loss**, **Sold**, or **History** to narrow the status, and **Single** or **Combo** to filter their type. **History** keeps a market visible when activity is available but its position snapshot is missing; unavailable balances and PnL display an em dash. Click a position's market cell to expand its details.
+   - **Active Position** shows markets with activity in the searched time window, grouped by wallet and outcome/token. Use **Open** for open positions and winnings not yet redeemed, or **Close** for lost, redeemed, and fully sold positions. Select neither or both to show all positions (the default). **Single** and **Combo** filter their type. Rows marked **History** have activity but no position snapshot; they remain in the unfiltered view with unavailable balances and PnL shown as an em dash. Click a position's market cell to expand its details.
    - **Json** shows the filtered activity records as formatted JSON.
 5. Click **Export** to download the current filtered activity or positions as CSV, or the Json view as JSON. Exports include all loaded matching records, even when the screen shows only a subset.
 
