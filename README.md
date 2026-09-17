@@ -29,7 +29,7 @@ No wallet connection, private key, seed phrase, or transaction signing is requir
 | PnL | Reported position profit or loss and percentage, when available. Redeemed rows may have no PnL. |
 | End date | Reported market end date. |
 
-Open single-market prices refresh while the positions view and browser tab are visible, with a 10-second countdown after each refresh completes. The countdown beside **Reset filters** shows when the next refresh is due and displays **Refreshing…** during a request. Refreshing pauses while the browser tab is hidden. These updates use market midpoints; they are not guaranteed execution prices. Open combo prices are estimated from their legs.
+Single-market holdings and open-position prices refresh while the positions view and browser tab are visible, with a 10-second countdown after each refresh completes. Each refresh reloads shares, average entry price, and cost basis from the positions API, detects newly opened or removed holdings, then applies market midpoints to the latest shares. The countdown beside **Reset filters** shows when the next refresh is due and displays **Refreshing…** during a request. Refreshing pauses while the browser tab is hidden. A failed or incomplete holdings refresh keeps the last known holdings and displays a retry message. Updates still depend on Polymarket's indexing delay; market midpoints are not guaranteed execution prices. Combo positions and sold/redeemed history reload when you run **Check activity** again; combo prices are estimated from their legs.
 
 The time-range selector controls the activity search and summary PnL period. Positions reflect current holdings and available position history, rather than holdings at a historical date. The summary **PnL** and **Portfolio value** cards are not recalculated by the client-side filters below them.
 
@@ -48,6 +48,7 @@ The app requests data directly from Polymarket APIs, Polygon Blockscout, and a p
 
 - API availability, rate limits, pagination limits, and indexing delays can affect results. Check any incomplete-data messages shown in the app.
 - The single-position request uses a size threshold of 1 share, so very small holdings may be omitted.
+- Live holdings refresh keeps the previous snapshot if the 2,000-position fetch limit is reached, since an incomplete result cannot reliably identify removed positions.
 - Position tables display up to 1,000 rows; exports include all loaded matching rows. Fetch limits still apply to exports.
 - Fees are estimates. Funding classifications, combo valuations, and reconstructed redemption records may differ from the platform's own accounting.
 - If results are missing, verify the wallet address, clear filters, try a shorter activity range, and run the search again.

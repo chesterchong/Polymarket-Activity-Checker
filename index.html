@@ -605,7 +605,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         </span>
         <span id="chips" class="chips"></span>
         <span class="flex-spacer"></span>
-        <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" title="Live prices refresh for open single-market positions">Next refresh in 10s</span>
+        <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" title="Single-market holdings and open-position prices refresh every 10 seconds">Next refresh in 10s</span>
         <button class="btn btn-ghost" id="resetBtn" title="Reset all filters">Reset filters</button>
       </div>
     </div>
@@ -801,10 +801,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
   // ---------- fetching with limit=500 & offset pagination ----------
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
-  async function fetchWithRetry(url, tries=3, timeoutMs=0){
+  async function fetchWithRetry(url, tries=3, timeoutMs=0, options={}){
     for(let attempt=0; ; attempt++){
       try{
-        const res = await fetch(url, timeoutMs ? {signal: AbortSignal.timeout(timeoutMs)} : undefined);
+        const res = await fetch(url, {...options, ...(timeoutMs ? {signal: AbortSignal.timeout(timeoutMs)} : {})});
         if((res.status === 429 || res.status >= 500) && attempt < tries-1){
           const ra = Number(res.headers.get("Retry-After"));
           await sleep(ra > 0 ? ra*1000 : 1000 * Math.pow(2, attempt));
@@ -1171,6 +1171,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // above already stripped the wrap's active class.
     posRunSeq++; allPositions = []; posLoaded = false; posLoading = false;
     posError = null; posTruncated = false; posFailedWallets = []; posRenderKey = null;
+    liveActive = false; livePositionError = "";
     if($("tabPositions").classList.contains("on")) loadPositions();
     lastBalance = null; $("stBalance").textContent = "–";
     pollBalance(); // wallet cash shows immediately rather than on the next interval
@@ -1673,10 +1674,28 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       cashPnl: pnl, percentPnl: initial ? pnl / initial * 100 : NaN,
       redeemable: false};
   }
+  async function fetchCurrentPositions(addr){
+    const out = [];
+    // Only request another page when needed: this runs every live tick, including
+    // for empty wallets so their first purchase can appear without a new search.
+    for(let page = 0; page < POS_MAX_PAGES; page++){
+      const url = "https://data-api.polymarket.com/positions?" + new URLSearchParams({
+        user:addr, limit:"500", offset:String(page*500), sizeThreshold:"1"
+      });
+      const res = await fetchWithRetry(url, 2, 8000, {cache:"no-store"});
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      const rows = await res.json();
+      if(!Array.isArray(rows)) throw new Error("Invalid positions response");
+      out.push(...rows.map(p => ({...p, proxyWallet:addr})));
+      if(rows.length < 500) return {out, truncated:false};
+    }
+    return {out, truncated:true};
+  }
   async function loadPositions(){
     const myRun = ++posRunSeq; // a newer run() or reload invalidates this fetch
     posLoading = true; posLoaded = false; posError = null; posTruncated = false;
     posFailedWallets = []; allPositions = [];
+    liveActive = false; livePositionError = "";
     nextLiveRefreshAt = 0;
     updateRefreshCountdown();
     renderPositions();
@@ -1702,9 +1721,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           }
           return {out, truncated};
         };
-        const singlesP = pagedFetch(
-          page => "https://data-api.polymarket.com/positions?" + new URLSearchParams({user:addr, limit:"500", offset:String(page*500), sizeThreshold:"1"}).toString(),
-          j => j);
+        const singlesP = fetchCurrentPositions(addr);
         // the combos endpoint defaults to 20 rows — paginate it like the singles,
         // or open combos beyond the first page silently vanish
         const combosP = pagedFetch(
@@ -1905,6 +1922,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     }
     if(posLoaded && posFailedWallets.length)
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
+    if(livePositionError) note += (note ? " · " : "") + livePositionError;
     return note;
   }
   function setPosNote(note){
@@ -1912,50 +1930,118 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       + (liveActive ? '<span class="live-pill"><span class="live-dot"></span>live</span>' : "");
   }
 
-  // ---------- live prices for open single positions (10s between CLOB midpoint refreshes) ----------
-  // One batched POST per tick, only while the positions view is visible in a
-  // focused tab. Prices patch the data model, then only the affected cells and
-  // the totals line update in place — no full re-render, no re-sort jumping.
+  // ---------- live single holdings and prices (10s after each completed refresh) ----------
+  // The Data API owns shares and cost basis; CLOB midpoints only supply prices.
+  // Reconcile holdings first, then value those latest shares at the live price.
   const LIVE_MS = 10000, LIVE_MAX_TOKENS = 600, LIVE_CHUNK = 300;
   let liveBusy = false, liveActive = false;
+  let livePositionError = "";
   let nextLiveRefreshAt = 0;
-  function hasLivePositions(){
-    return allPositions.some(p => !p.isCombo && p.asset && posStatus(p) === "open");
+  function positionSnapshotKey(p){
+    return ((p.proxyWallet || "") + "|" + (p.asset || ((p.conditionId || "") + "|" + (p.outcome || "")))).toLowerCase();
+  }
+  function rememberPositionChange(changed, p){
+    if(!changed.has(p)) changed.set(p, {
+      oldSize:p.size, oldAvg:p.avgPrice, oldCost:p.initialValue,
+      oldPx:Number(p.curPrice) || 0, oldVal:Number(p.currentValue) || 0,
+      oldPnl:Number(p.cashPnl) || 0
+    });
+  }
+  async function refreshPositionHoldings(myRun){
+    const results = await Promise.all(currentWallets.map(async addr => {
+      try{
+        const snapshot = await fetchCurrentPositions(addr);
+        // An incomplete snapshot cannot tell us which holdings were sold. Keep
+        // the previous wallet intact rather than silently dropping missing rows.
+        if(snapshot.truncated) throw new Error("Position limit reached");
+        return {addr, rows:snapshot.out};
+      }catch(e){ return {addr, error:e}; }
+    }));
+    if(myRun !== posRunSeq) return null;
+    const changed = new Map(), failedWallets = [];
+    let totalDelta = 0, structureChanged = false;
+    for(const result of results){
+      if(result.error){ failedWallets.push(result.addr); continue; }
+      const wallet = result.addr.toLowerCase();
+      const isCurrent = p => (p.proxyWallet || "").toLowerCase() === wallet
+        && !p.isCombo && !p.isRedeemed && !p.isClosed;
+      const previous = allPositions.filter(isCurrent);
+      const byKey = new Map(previous.map(p => [positionSnapshotKey(p), p]));
+      const oldValue = previous.reduce((s,p) => s + (Number(p.currentValue) || 0), 0);
+      const rows = result.rows.map(fresh => {
+        const p = byKey.get(positionSnapshotKey(fresh));
+        if(!p){
+          posHistCache.delete(posKey(fresh));
+          structureChanged = true;
+          return fresh;
+        }
+        byKey.delete(positionSnapshotKey(fresh));
+        rememberPositionChange(changed, p);
+        if(posStatus(p) !== posStatus(fresh)
+          || ["title","outcome","icon","slug","eventSlug","endDate"].some(k => p[k] !== fresh[k])) structureChanged = true;
+        if(p.size !== fresh.size || p.avgPrice !== fresh.avgPrice || p.initialValue !== fresh.initialValue){
+          posHistCache.delete(posKey(p));
+          // Rebuild expanded history too when a trade changes this position.
+          if(expandedPos.has(posKey(p))) structureChanged = true;
+        }
+        Object.assign(p, fresh); // keep posRendered's object references current
+        return p;
+      });
+      if(byKey.size){
+        for(const p of byKey.values()) posHistCache.delete(posKey(p));
+        structureChanged = true;
+      }
+      const held = new Set(rows.map(p => ((p.conditionId || "") + "|" + (p.outcome || "")).toLowerCase()));
+      allPositions = allPositions.filter(p => {
+        if(isCurrent(p)) return false;
+        // A previously sold outcome may have been bought again.
+        if(p.isClosed && (p.proxyWallet || "").toLowerCase() === wallet
+          && held.has(((p.conditionId || "") + "|" + (p.outcome || "")).toLowerCase())){
+          structureChanged = true;
+          return false;
+        }
+        return true;
+      }).concat(rows);
+      totalDelta += rows.reduce((s,p) => s + (Number(p.currentValue) || 0), 0) - oldValue;
+    }
+    return {changed, totalDelta, structureChanged, failedWallets};
   }
   function updateRefreshCountdown(){
     const label = $("refreshCountdown");
     if(!$("posWrap").classList.contains("active")) return;
     if(posLoading) label.textContent = "Loading positions…";
     else if(!posLoaded) label.textContent = "Refresh unavailable";
-    else if(!hasLivePositions()) label.textContent = "No live prices to refresh";
+    else if(!currentWallets.length) label.textContent = "No wallets to refresh";
     else if(document.hidden) label.textContent = "Refresh paused";
     else if(liveBusy) label.textContent = "Refreshing…";
-    else label.textContent = "Next refresh in " + Math.max(0, Math.ceil((nextLiveRefreshAt - Date.now()) / 1000)) + "s";
+    else label.textContent = (livePositionError ? "Retry refresh in " : "Next refresh in ") + Math.max(0, Math.ceil((nextLiveRefreshAt - Date.now()) / 1000)) + "s";
   }
   async function pollLivePrices(){
     updateRefreshCountdown();
     if(liveBusy || posLoading || !posLoaded || document.hidden) return;
     if(!$("posWrap").classList.contains("active")) return;
     if(Date.now() < nextLiveRefreshAt) return;
-    const targets = allPositions.filter(p => !p.isCombo && p.asset && posStatus(p) === "open");
-    if(!targets.length) return;
-    const tokens = [...new Set(targets.map(p => String(p.asset)))].slice(0, LIVE_MAX_TOKENS);
+    if(!currentWallets.length) return;
     const myRun = posRunSeq;
     liveBusy = true;
     updateRefreshCountdown();
     try{
+      const holdings = await refreshPositionHoldings(myRun);
+      if(!holdings) return;
+      const {changed, structureChanged, failedWallets} = holdings;
+      let totalDelta = holdings.totalDelta;
+      const targets = allPositions.filter(p => !p.isCombo && p.asset && posStatus(p) === "open");
+      const tokens = [...new Set(targets.map(p => String(p.asset)))].slice(0, LIVE_MAX_TOKENS);
       const chunks = [];
       for(let i = 0; i < tokens.length; i += LIVE_CHUNK) chunks.push(tokens.slice(i, i + LIVE_CHUNK));
-      const parts = await Promise.all(chunks.map(c =>
+      const parts = await Promise.allSettled(chunks.map(c =>
         fetch("https://clob.polymarket.com/midpoints", {
           method: "POST", headers: {"content-type": "application/json"},
           body: JSON.stringify(c.map(t => ({token_id: t}))),
           signal: AbortSignal.timeout(8000)
-        }).then(r => r.ok ? r.json() : {})));
+        }).then(r => { if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })));
       if(myRun !== posRunSeq) return; // a new search landed while we were fetching
-      const prices = Object.assign({}, ...parts);
-      const changed = new Map(); // position -> {dir, old values for the tween start}
-      let totalDelta = 0;
+      const prices = Object.assign({}, ...parts.filter(p => p.status === "fulfilled").map(p => p.value));
       for(const p of targets){
         const px = Number(prices[String(p.asset)]);
         if(!isFinite(px) || px <= 0) continue; // resolved/bookless tokens keep their last price
@@ -1963,16 +2049,27 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         if(Math.abs(px - old) < 0.0005) continue;
         const oldVal = Number(p.currentValue) || 0;
         const oldPnl = Number(p.cashPnl) || 0;
+        rememberPositionChange(changed, p);
         p.curPrice = px;
         p.currentValue = (Number(p.size) || 0) * px;
         p.cashPnl = oldPnl + (p.currentValue - oldVal);
         if(Number(p.initialValue)) p.percentPnl = p.cashPnl / Number(p.initialValue) * 100;
         totalDelta += p.currentValue - oldVal;
-        changed.set(p, {dir: px > old ? "px-up" : "px-down", oldPx: old, oldVal, oldPnl});
       }
-      liveActive = true;
+      livePositionError = failedWallets.length
+        ? "Holdings refresh failed for " + failedWallets.map(short).join(", ") + "; showing last known holdings"
+        : parts.some(p => p.status === "rejected") ? "Live prices unavailable; showing latest reported prices" : "";
+      liveActive = !livePositionError;
+      if(structureChanged){ posRenderKey = null; renderPositions(); }
       applyLivePrices(changed, totalDelta);
-    }catch(e){ console.warn("live prices tick failed:", e); /* transient — next tick retries */ }
+    }catch(e){
+      if(myRun === posRunSeq){
+        liveActive = false;
+        livePositionError = "Position refresh failed; showing last known holdings";
+        setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
+      }
+      console.warn("live positions tick failed:", e);
+    }
     finally{
       liveBusy = false;
       // Schedule from completion so slow requests never overlap and the label
@@ -2007,7 +2104,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     + (dir === "px-up" ? "▲" : "▼") + "</span>";
   function applyLivePrices(changed, totalDelta){
     const body = $("posBody");
-    // original column indices: 5 = Cur price, 7 = Value, 8 = PnL
+    // Use original column indices so reordered/hidden columns still update.
+    const sizePos = posCols.order.indexOf(3), avgPos = posCols.order.indexOf(4), costPos = posCols.order.indexOf(6);
     const curPos = posCols.order.indexOf(5), valPos = posCols.order.indexOf(7), pnlPos = posCols.order.indexOf(8);
     // expanded detail rows sit between position rows — address rows by data-pi, not child index
     const rowByPi = new Map();
@@ -2018,9 +2116,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       if(!ch) return;
       const row = rowByPi.get(i);
       if(!row) return;
+      const chDir = Number(p.curPrice) >= ch.oldPx ? "px-up" : "px-down";
+      const updateHolding = (col, old, value, fmt) => {
+        const td = row.cells[col];
+        if(!td || old === value) return;
+        if(value == null || !Number.isFinite(Number(value))){ td.textContent = "—"; return; }
+        tweenCell(td, old == null ? NaN : Number(old), Number(value), fmt, Number(value) >= Number(old) ? "px-up" : "px-down");
+      };
+      updateHolding(sizePos, ch.oldSize, p.size, fmtNum);
+      updateHolding(avgPos, ch.oldAvg, p.avgPrice, v => v.toFixed(3));
+      updateHolding(costPos, ch.oldCost, p.initialValue, v => "$" + fmtUsd(v));
       const cur = row.cells[curPos], val = row.cells[valPos], pnlTd = row.cells[pnlPos];
-      if(cur) tweenCell(cur, ch.oldPx, Number(p.curPrice), v => v.toFixed(3) + tickArrow(ch.dir), ch.dir);
-      if(val) tweenCell(val, ch.oldVal, Number(p.currentValue), v => "$" + fmtUsd(v), ch.dir);
+      if(cur && ch.oldPx !== Number(p.curPrice)) tweenCell(cur, ch.oldPx, Number(p.curPrice), v => v.toFixed(3) + tickArrow(chDir), chDir);
+      if(val && ch.oldVal !== Number(p.currentValue)) tweenCell(val, ch.oldVal, Number(p.currentValue), v => "$" + fmtUsd(v), Number(p.currentValue) >= ch.oldVal ? "px-up" : "px-down");
       if(pnlTd){
         const pnl = Number(p.cashPnl) || 0;
         const initial = Number(p.initialValue) || 0;
@@ -2029,7 +2137,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         tweenCell(pnlTd, ch.oldPnl, pnl, v =>
           (v < 0 ? "-$" : "$") + fmtUsd(Math.abs(v))
           + (initial ? ' <span class="pnl-pct">(' + (v >= 0 ? "+" : "") + (v / initial * 100).toFixed(1) + '%)</span>' : ""),
-          ch.dir);
+          pnl >= ch.oldPnl ? "px-up" : "px-down");
       }
     });
     // the stats card's Portfolio value drifts live with the same deltas
