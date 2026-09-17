@@ -54,7 +54,8 @@ function harness(options = {}) {
     URL, URLSearchParams, AbortSignal,
     console: {warn: (...args) => events.push(['warn', ...args])},
     POS_MAX_PAGES: 4,
-    LIVE_MS: 1000,
+    LIVE_MS: 3000,
+    PRICE_MS: 1000,
     LIVE_MAX_TOKENS: 600,
     LIVE_CHUNK: 300,
     allPositions: options.positions || [],
@@ -70,6 +71,10 @@ function harness(options = {}) {
     liveBusy: false,
     liveActive: false,
     livePositionError: '',
+    livePriceError: '',
+    priceBusyRun: null,
+    nextPriceRefreshAt: 0,
+    latestMidpoints: new Map(),
     nextLiveRefreshAt: 0,
     nextHistoryRefreshAt: 0,
     document: {hidden: false},
@@ -90,14 +95,14 @@ function harness(options = {}) {
     refreshPositionHistory: async () => ({failed: false}),
     refreshPortfolioValue: async () => {},
     updateRefreshCountdown: () => events.push(['countdown']),
-    applyLivePrices: (changes, delta) => events.push(['apply', changes, delta]),
+    applyLivePrices: (changes, delta, priceTick) => events.push(['apply', changes, delta, priceTick]),
     setPosNote: note => events.push(['note', note]),
     buildPosNote: () => '',
     visiblePositions: () => context.allPositions,
     positionViewRows: () => context.allPositions,
     positionTradesFor: () => [],
   });
-  const names = ['fetchWithRetry', 'fetchCurrentPositions', 'positionSnapshotKey', 'rememberPositionChange', 'refreshPositionHoldings', 'posStatus', 'pollLivePrices'];
+  const names = ['fetchWithRetry', 'fetchCurrentPositions', 'positionSnapshotKey', 'rememberPositionChange', 'applyPositionMidpoint', 'refreshPositionHoldings', 'posStatus', 'pollLiveHoldings', 'pollLivePrices', 'flashPositionPrice'];
   vm.runInContext(['posKey', 'short', 'fmtNum', 'fmtUsd'].map(productionConstant).concat(names.map(productionFunction)).join('\n'), context, {filename: 'index.html extracted functions'});
   return {context, calls, events, elements};
 }
@@ -223,6 +228,7 @@ test('a live tick discovers the first holding and fetches its midpoint after the
     }
     return response({'nrg-token': '0.61'});
   }});
+  await context.pollLiveHoldings();
   await context.pollLivePrices();
   assert.equal(calls.length, 2);
   assert.equal(new URL(calls[0].url).pathname, '/positions');
@@ -249,7 +255,7 @@ test('hidden, inactive, busy and not-yet-due ticks make no requests', async t =>
       if (mode === 'loading') context.posLoading = true;
       if (mode === 'notLoaded') context.posLoaded = false;
       if (mode === 'notDue') context.nextLiveRefreshAt = Date.now() + 10000;
-      await context.pollLivePrices();
+      await context.pollLiveHoldings();
       assert.equal(calls.length, 0);
     });
   }
@@ -261,12 +267,12 @@ test('the visible shares, average and cost cells refresh even when the midpoint 
   const {context} = harness({positions: [original], fetch: async url => response(new URL(url).pathname === '/positions' ? [fresh] : {'nrg-token': '0.605'})});
   context.posCols = {order: [4, 8, 6, 3, 5, 7, 0, 1, 2, 9]};
   context.posRendered = [original];
-  const cells = context.posCols.order.map(() => ({innerHTML: '', classList: {toggle() {}}}));
-  context.$('posBody').children = [{dataset: {pi: '0'}, cells, classList: {contains: kind => kind === 'pos-row'}}];
+  const cells = context.posCols.order.map(() => ({innerHTML: '', classList: {toggle() {}, remove() {}}}));
+  context.$('posBody').children = [{dataset: {pi: '0'}, cells, classList: {contains: kind => kind === 'pos-row', toggle() {}}}];
   context.tweenCell = (cell, old, value, format) => { cell.innerHTML = format(value); };
   context.tickArrow = () => '';
   vm.runInContext(productionFunction('applyLivePrices'), context);
-  await context.pollLivePrices();
+  await context.pollLiveHoldings();
   assert.equal(cells[context.posCols.order.indexOf(3)].innerHTML, '1,000');
   assert.equal(cells[context.posCols.order.indexOf(4)].innerHTML, '0.700');
   assert.equal(cells[context.posCols.order.indexOf(6)].innerHTML, '$700.00');
@@ -279,11 +285,12 @@ test('a failed midpoint request still applies fresh holdings and reports an unav
   const {context, events} = harness({positions: [original], fetch: async url => (
     new URL(url).pathname === '/positions' ? response([fresh]) : response({}, 503)
   )});
+  await context.pollLiveHoldings();
   await context.pollLivePrices();
   assert.equal(original.size, 1000);
   assert.equal(original.avgPrice, 0.7);
   assert.equal(context.liveActive, false);
-  assert.match(context.livePositionError, /prices unavailable/i);
+  assert.match(context.livePriceError, /prices unavailable/i);
   assert.ok(events.some(e => e[0] === 'apply' && e[1].has(original)));
   assert.equal(context.liveBusy, false);
   assert.ok(context.nextLiveRefreshAt > Date.now());
@@ -294,7 +301,7 @@ test('a failed holdings request keeps the previous wallet and marks its holdings
   const {context} = harness({positions: [original], fetch: async url => (
     new URL(url).pathname === '/positions' ? response({}, 503) : response({'nrg-token': '0.605'})
   )});
-  await context.pollLivePrices();
+  await context.pollLiveHoldings();
   assert.equal(context.allPositions[0], original);
   assert.equal(original.size, 583.53);
   assert.equal(context.liveActive, false);
@@ -329,4 +336,139 @@ test('closing and re-entering a position both invalidate its cached history with
   assert.equal(context.allPositions[0].size, 1000);
   assert.equal(context.posHistCache.has(key), false, 'a new holding must discard any history cached before re-entry');
   assert.equal(context.posHistCache.get(unrelatedKey), unrelatedHistory);
+});
+
+test('one-second quotes continue during slow holdings sync, which preserves the quote with fresh shares and cost', async () => {
+  const gate = deferred();
+  const original = position();
+  const {context, calls} = harness({positions: [original], fetch: async url =>
+    new URL(url).pathname === '/positions' ? gate.promise : response({'nrg-token': '0.62'})});
+  const pending = context.pollLiveHoldings();
+  assert.equal(context.liveBusy, true);
+  await context.pollLivePrices();
+  assert.equal(original.curPrice, 0.62, 'slow holdings must not block the price loop');
+  assert.equal(context.liveBusy, true);
+  gate.resolve(response([position({size: 1000, avgPrice: 0.7, initialValue: 700, curPrice: 0.6, currentValue: 600, cashPnl: -100})]));
+  await pending;
+  assert.equal(calls.length, 2);
+  assert.equal(original.size, 1000);
+  assert.equal(original.avgPrice, 0.7);
+  assert.equal(original.initialValue, 700);
+  assert.equal(original.curPrice, 0.62);
+  assert.equal(original.currentValue, 620);
+  assert.equal(original.cashPnl, -80);
+});
+
+test('a delayed quote values the latest shares after a holdings update, without starting a second price request', async () => {
+  const gate = deferred();
+  const original = position();
+  const {context, calls} = harness({positions: [original], fetch: async url =>
+    new URL(url).pathname === '/midpoints' ? gate.promise
+      : response([position({size: 1000, initialValue: 700, curPrice: 0.6, currentValue: 600, cashPnl: -100})])});
+  const startedAt = Date.now();
+  const pending = context.pollLivePrices();
+  await context.pollLivePrices();
+  assert.equal(calls.length, 1, 'in-flight midpoint requests cannot overlap');
+  await context.refreshPositionHoldings(1);
+  gate.resolve(response({'nrg-token': '0.61'}));
+  await pending;
+  assert.equal(original.size, 1000);
+  assert.equal(original.currentValue, 610);
+  assert.equal(original.cashPnl, -90);
+  assert.equal(context.priceBusyRun, null);
+  assert.ok(context.nextPriceRefreshAt >= startedAt + 1000);
+  assert.ok(context.nextPriceRefreshAt <= Date.now() + 1000);
+});
+
+test('a pending quote cannot mutate removed, redeemed or newly resolved positions', async t => {
+  for(const status of ['removed', 'redeemed', 'winner', 'loser']) await t.test(status, async () => {
+    const gate = deferred();
+    const original = position();
+    const {context, events} = harness({positions: [original], fetch: async () => gate.promise});
+    const pending = context.pollLivePrices();
+    if(status === 'removed') context.allPositions = [];
+    if(status === 'redeemed') Object.assign(original, {isRedeemed: true, currentValue: 0});
+    if(status === 'winner') Object.assign(original, {redeemable: true, curPrice: 1, currentValue: 583.53});
+    if(status === 'loser') Object.assign(original, {redeemable: true, curPrice: 0, currentValue: 0});
+    const snapshot = {...original};
+    gate.resolve(response({'nrg-token': '0.8'}));
+    await pending;
+    assert.deepEqual(original, snapshot);
+    assert.equal(events.find(e => e[0] === 'apply')[1].size, 0);
+  });
+});
+
+test('a quote from an older search cannot update current rows or cache and the new search can retry', async () => {
+  const gate = deferred();
+  let attempt = 0;
+  const original = position();
+  const {context} = harness({positions: [original], fetch: async () => ++attempt === 1 ? gate.promise : response({'nrg-token': '0.8'})});
+  const pending = context.pollLivePrices();
+  context.posRunSeq++;
+  const next = position({size: 1000, currentValue: 605, cashPnl: -95});
+  context.allPositions = [next];
+  await context.pollLivePrices();
+  assert.equal(attempt, 1, 'a previous search still owns the pending request');
+  gate.resolve(response({'nrg-token': '0.9'}));
+  await pending;
+  assert.equal(next.curPrice, 0.605);
+  assert.equal(original.curPrice, 0.605);
+  assert.equal(context.latestMidpoints.size, 0);
+  assert.equal(context.priceBusyRun, null);
+  assert.equal(context.nextPriceRefreshAt, 0);
+  await context.pollLivePrices();
+  assert.equal(attempt, 2);
+  assert.equal(next.curPrice, 0.8);
+  assert.equal(next.currentValue, 800);
+});
+
+test('price polling respects visibility, loading, wallets and its own deadline', async t => {
+  for(const mode of ['hidden', 'inactive', 'loading', 'notLoaded', 'notDue', 'noWallets']) await t.test(mode, async () => {
+    const {context, calls} = harness({positions: [position()]});
+    if(mode === 'hidden') context.document.hidden = true;
+    if(mode === 'inactive') context.$('posWrap').classList.contains = () => false;
+    if(mode === 'loading') context.posLoading = true;
+    if(mode === 'notLoaded') context.posLoaded = false;
+    if(mode === 'notDue') context.nextPriceRefreshAt = Date.now() + 10000;
+    if(mode === 'noWallets') context.currentWallets = [];
+    await context.pollLivePrices();
+    assert.equal(calls.length, 0);
+  });
+});
+
+test('unchanged quotes do not produce a row change, and price errors clear when no ongoing positions remain', async () => {
+  let failed = false;
+  const original = position();
+  const {context, events} = harness({positions: [original], fetch: async () => failed ? response({}, 503) : response({'nrg-token': '0.605'})});
+  await context.pollLivePrices();
+  assert.equal(events.find(e => e[0] === 'apply')[1].size, 0);
+  failed = true;
+  context.nextPriceRefreshAt = 0;
+  await context.pollLivePrices();
+  assert.match(context.livePriceError, /prices unavailable/i);
+  context.livePositionError = 'Holdings refresh failed';
+  context.allPositions = [];
+  context.nextPriceRefreshAt = 0;
+  await context.pollLivePrices();
+  assert.equal(context.livePriceError, '');
+  assert.equal(context.livePositionError, 'Holdings refresh failed');
+  assert.equal(context.liveActive, false, 'price recovery cannot erase a holdings error');
+  assert.ok(events.some(e => e[0] === 'note'));
+});
+
+test('row pulse follows total profit or loss, independent of price direction, and excludes unchanged or settled rows', () => {
+  const {context} = harness();
+  const classes = new Set();
+  let restarts = 0;
+  const row = {classList: {add: c => classes.add(c), remove: (...cs) => cs.forEach(c => classes.delete(c))}, get offsetWidth(){ restarts++; return 100; }};
+  context.flashPositionPrice(row, position({curPrice: 0.7, cashPnl: 20}), 0.8);
+  assert.equal(classes.has('price-profit'), true, 'a profitable downward move stays green');
+  context.flashPositionPrice(row, position({curPrice: 0.6, cashPnl: -20}), 0.5);
+  assert.equal(classes.has('price-loss'), true, 'a losing upward move stays red');
+  assert.equal(classes.has('price-profit'), false);
+  context.flashPositionPrice(row, position({curPrice: 0.6, cashPnl: -20}), 0.6);
+  context.flashPositionPrice(row, position({curPrice: 1, redeemable: true, cashPnl: 20}), 0.9);
+  assert.equal(restarts, 2, 'unchanged and redeemable positions do not start pulses');
+  context.flashPositionPrice(row, position({curPrice: 0.7, cashPnl: 0}), 0.6);
+  assert.equal(classes.size, 0, 'break-even remains neutral');
 });

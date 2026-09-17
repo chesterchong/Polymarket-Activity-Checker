@@ -23,7 +23,7 @@
   --card:#ffffff; --muted:#f5f5f5; --muted-foreground:#737373;
   --primary:#165dfc; --primary-foreground:#ffffff;
   --border:#e5e5e5; --input-bg:rgba(255,255,255,.8);
-  --destructive:#df2225; --success:#0d9455;
+  --destructive:#df2225; --success:#0d9455; --redeemable:#2563a6;
   --badge-buy-bg:#e8f7ef; --badge-buy-fg:#0d9455;
   --badge-sell-bg:#fdecec; --badge-sell-fg:#df2225;
   --badge-neutral-bg:#f4f4f5; --badge-neutral-fg:#52525b;
@@ -34,7 +34,7 @@
   --card:#111214; --muted:#18191c; --muted-foreground:#8b8d96;
   --primary:#165dfc; --primary-foreground:#ffffff;
   --border:#1f2023; --input-bg:rgba(17,18,20,.8);
-  --destructive:#ff6568; --success:#34d399;
+  --destructive:#ff6568; --success:#34d399; --redeemable:#93c5fd;
   --badge-buy-bg:rgba(13,148,85,.16); --badge-buy-fg:#34d399;
   --badge-sell-bg:rgba(223,34,37,.16); --badge-sell-fg:#ff6568;
   --badge-neutral-bg:#1f2023; --badge-neutral-fg:#a1a1aa;
@@ -68,6 +68,7 @@ body{
 
 /* header */
 .header{display:flex; align-items:flex-start; justify-content:space-between; gap:12px;}
+.header-actions{display:flex; gap:8px; flex-shrink:0;}
 h1{font-size:16px; font-weight:600; letter-spacing:-.01em;}
 .sub{font-size:13px; color:var(--muted-foreground); margin-top:2px;}
 .icon-btn{
@@ -76,7 +77,10 @@ h1{font-size:16px; font-weight:600; letter-spacing:-.01em;}
   color:var(--foreground); cursor:pointer; transition:background .15s;
 }
 .icon-btn:hover{background:var(--muted);}
+.icon-btn:focus-visible{outline:2px solid var(--primary); outline-offset:2px;}
 .icon-btn svg{width:15px; height:15px;}
+#saveAddressesBtn.on{color:var(--primary); border-color:var(--primary);}
+#saveAddressesBtn.on svg{fill:currentColor;}
 
 /* input card */
 .card{border:1px solid var(--border); background:var(--card);}
@@ -219,8 +223,17 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .results-bar.pos-mode .fchip[data-cat="rewards"]{display:none;}
 .fchips.pos-only{display:none;}
 .results-bar.pos-mode .fchips.pos-only{display:inline-flex;}
-.refresh-countdown{display:none; color:var(--muted-foreground); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap;}
-.results-bar.pos-mode .refresh-countdown{display:inline-block;}
+.refresh-countdown{display:none; align-items:center; justify-content:center; gap:4px; width:28px; height:32px; flex:0 0 28px; color:var(--success);}
+.results-bar.pos-mode .refresh-countdown{display:inline-flex;}
+.refresh-countdown i{display:block; width:4px; height:17px; border-radius:2px; background:currentColor; transition:opacity .15s ease;}
+.refresh-countdown[data-bars="2"] i:nth-child(3),
+.refresh-countdown[data-bars="1"] i:nth-child(n+2),
+.refresh-countdown[data-bars="0"] i{opacity:.18;}
+.refresh-countdown[data-state="error"]{color:var(--destructive);}
+.refresh-countdown[data-state="paused"],.refresh-countdown[data-state="unavailable"],.refresh-countdown[data-state="loading"]{color:var(--muted-foreground);}
+@keyframes refreshPulse{50%{opacity:.35;}}
+.refresh-countdown[data-state="refreshing"] i,.refresh-countdown[data-state="loading"] i{animation:refreshPulse 1.2s ease-in-out infinite;}
+@media (prefers-reduced-motion:reduce){.refresh-countdown i{transition:none; animation:none!important;}}
 .pos-note{padding:10px 14px; font-size:12px; color:var(--muted-foreground); border-bottom:1px solid var(--border);}
 .pos-note:empty{display:none;}
 td.pos{color:var(--success);}
@@ -234,6 +247,10 @@ td.neg{color:var(--destructive);}
 .tick-arrow{font-size:9px; vertical-align:1px;}
 .tick-arrow.up{color:var(--success);}
 .tick-arrow.down{color:var(--destructive);}
+@keyframes positionProfit{0%{background:rgba(34,197,94,.22);}100%{background:transparent;}}
+@keyframes positionLoss{0%{background:rgba(239,68,68,.22);}100%{background:transparent;}}
+tr.pos-row.price-profit{animation:positionProfit .9s ease-out;}
+tr.pos-row.price-loss{animation:positionLoss .9s ease-out;}
 /* breathing "live" indicator */
 .live-pill{display:inline-flex; align-items:center; gap:5px; margin-left:8px; color:var(--success); font-weight:500;}
 .live-dot{width:7px; height:7px; border-radius:50%; background:var(--success); animation:liveBreathe 1.8s ease-in-out infinite;}
@@ -242,7 +259,7 @@ td.neg{color:var(--destructive);}
   50%{opacity:1; box-shadow:0 0 7px 1px rgba(34,197,94,.5);}
 }
 @media (prefers-reduced-motion: reduce){
-  .px-up, .px-down{animation:none;}
+  .px-up, .px-down,tr.pos-row.price-profit,tr.pos-row.price-loss{animation:none;}
   .live-dot{animation:none; opacity:1;}
 }
 .table-wrap.grabbable{cursor:grab;} /* interactive cells (headers, badges, links) override with their own cursor */
@@ -345,6 +362,8 @@ table.resized .market-cell{max-width:none; width:100%; min-width:0;}
 
 /* expandable position rows: click a row to reveal that market's full trade history */
 #posWrap tbody tr.pos-row td{cursor:pointer;}
+/* Unclaimed winning positions stay blue, including links, PnL and live price ticks. */
+#posWrap tr.pos-redeemable>td,#posWrap tr.pos-redeemable>td *{color:var(--redeemable)!important;}
 .pos-caret{display:inline-block; flex-shrink:0; width:11px; color:var(--muted-foreground); font-size:10px; transition:transform .15s ease;}
 tr.pos-row.expanded .pos-caret{transform:rotate(90deg);}
 @media (prefers-reduced-motion: reduce){ .pos-caret{transition:none;} }
@@ -378,6 +397,8 @@ footer a{color:inherit;}
 
 .ta-wrap{position:relative;}
 #addrInput{word-break:break-all;}
+.address-note{padding:0 12px 10px; font-size:12px; color:var(--muted-foreground);}
+.address-note.error{color:var(--destructive);}
 
 /* segmented control — pill-shaped */
 .seg{display:inline-flex; border:1px solid var(--border); background:var(--card); border-radius:999px; overflow:hidden;}
@@ -483,16 +504,22 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <h1>Polymarket Activity Checker</h1>
         <p class="sub">Paste one or more addresses, separated by commas or new lines.</p>
       </div>
-      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
+      <div class="header-actions">
+      <button type="button" class="icon-btn" id="saveAddressesBtn" title="Save addresses in this browser" aria-label="Save addresses in this browser" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      </button>
+      <button type="button" class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
         <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         <svg id="iconSun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
       </button>
+      </div>
     </div>
 
     <div class="card">
       <div class="ta-wrap">
-        <textarea id="addrInput" placeholder="0x..." spellcheck="false"></textarea>
+        <textarea id="addrInput" placeholder="0x..." spellcheck="false" autocomplete="off" aria-label="Wallet addresses" aria-describedby="addressNote"></textarea>
       </div>
+      <div class="address-note" id="addressNote" role="status" hidden></div>
       <div class="toolbar">
         <div class="toolbar-left">
           <div class="seg" id="timeSeg" role="group" aria-label="Time range">
@@ -602,9 +629,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
           </span>
         </span>
+        <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" data-bars="3" data-state="live" aria-label="Next refresh in 3 seconds" title="Next refresh in 3 seconds"><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i></span>
         <span id="chips" class="chips"></span>
         <span class="flex-spacer"></span>
-        <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" title="Single-market holdings and open-position prices refresh 1 second after each request completes">Next refresh in 1s</span>
         <button class="btn btn-ghost" id="resetBtn" title="Reset all filters">Reset filters</button>
       </div>
     </div>
@@ -756,7 +783,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // convention, DST-aware) or GMT+8. The same zone governs the date filter.
   const TZ_KEY = "pmac_tz";
   const TZ_IANA = {"ET": "America/New_York", "GMT+8": "Asia/Singapore"};
-  let tzSel = localStorage.getItem(TZ_KEY) === "GMT+8" ? "GMT+8" : "ET";
+  let tzSel = "ET";
+  try{ if(localStorage.getItem(TZ_KEY) === "GMT+8") tzSel = "GMT+8"; }catch(e){}
   const fmtTime = ts => {
     const d = new Date(ts*1000);
     return d.toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",
@@ -795,8 +823,66 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return {valid, invalid};
   }
 
-  // address history was removed — drop any previously stored addresses
+  // Saved addresses are opt-in; discard the old automatic search history.
   try{ localStorage.removeItem("pmac_addr_history"); }catch(e){}
+  const SAVED_ADDRESSES_KEY = "pmac_saved_addresses";
+  let savedAddressText = "";
+  try{
+    const stored = JSON.parse(localStorage.getItem(SAVED_ADDRESSES_KEY));
+    if(Array.isArray(stored) && stored.every(a => typeof a === "string")){
+      const {valid, invalid} = parseAddresses(stored.join("\n"));
+      if(!invalid.length) savedAddressText = valid.join("\n");
+    }
+  }catch(e){}
+  function currentAddressesAreSaved(){
+    if(!savedAddressText) return false;
+    const raw = $("addrInput").value.trim();
+    if(!raw) return true;
+    const {valid, invalid} = parseAddresses(raw);
+    return !invalid.length && valid.join("\n").toLowerCase() === savedAddressText.toLowerCase();
+  }
+  function renderSavedAddresses(message = "", isError = false){
+    const input = $("addrInput"), button = $("saveAddressesBtn"), note = $("addressNote");
+    const saved = currentAddressesAreSaved();
+    const label = saved ? "Forget saved addresses" : savedAddressText ? "Update saved addresses in this browser" : "Save addresses in this browser";
+    button.classList.toggle("on", saved);
+    button.setAttribute("aria-pressed", String(saved));
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    input.placeholder = savedAddressText || "0x...";
+    note.textContent = message || (savedAddressText
+      ? (!input.value ? "Saved in this browser · Press Tab in the address field to fill" : saved ? "Addresses saved in this browser." : "Saved addresses available. Click the bookmark to replace them with this list.")
+      : "");
+    note.classList.toggle("error", isError);
+    note.hidden = !note.textContent;
+  }
+  $("saveAddressesBtn").addEventListener("click", () => {
+    const remove = currentAddressesAreSaved();
+    const {valid, invalid} = parseAddresses($("addrInput").value);
+    if(!remove && (!valid.length || invalid.length)){
+      renderSavedAddresses("Enter valid 0x wallet addresses before saving.", true);
+      $("addrInput").focus();
+      return;
+    }
+    try{
+      if(remove) localStorage.removeItem(SAVED_ADDRESSES_KEY);
+      else localStorage.setItem(SAVED_ADDRESSES_KEY, JSON.stringify(valid));
+      savedAddressText = remove ? "" : valid.join("\n");
+      renderSavedAddresses(remove ? "Saved addresses removed from this browser." : "Addresses saved in this browser. Clear the field or return later, then press Tab to fill.");
+    }catch(e){
+      renderSavedAddresses("Browser storage is unavailable. Saved addresses could not be changed.", true);
+    }
+  });
+  $("addrInput").addEventListener("input", () => renderSavedAddresses());
+  $("addrInput").addEventListener("keydown", e => {
+    if(e.key !== "Tab" || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.isComposing || !savedAddressText || $("addrInput").value) return;
+    e.preventDefault();
+    const input = $("addrInput");
+    input.value = savedAddressText;
+    input.setSelectionRange(input.value.length, input.value.length);
+    renderSavedAddresses("Saved addresses filled. Click Check activity to search.");
+  });
+  renderSavedAddresses();
 
   // ---------- fetching with limit=500 & offset pagination ----------
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
@@ -1173,6 +1259,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posError = null; posTruncated = false; posFailedWallets = []; posRenderKey = null;
     positionGroupCache = null; liveActivityCheckedAt = Math.floor(Date.now()/1000); nextHistoryRefreshAt = 0;
     liveActive = false; livePositionError = "";
+    resetPriceFeed();
     if($("tabPositions").classList.contains("on")) loadPositions();
     lastBalance = null; $("stBalance").textContent = "–";
     pollBalance(); // wallet cash shows immediately rather than on the next interval
@@ -1611,7 +1698,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // no auto-retry after a failure (posError) — progressive feed chunks re-dispatch
     // here and would otherwise hammer a failing endpoint in a loop
     if(!posLoaded && !posLoading && !posError && currentWallets.length) loadPositions();
-    else pollLivePrices(); // refresh immediately if the scheduled tick is due
+    else tickLiveRefresh(); // refresh each feed immediately if its scheduled tick is due
   }
 
   // ---------- drag-to-scroll affordance ----------
@@ -1835,6 +1922,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posLoading = true; posLoaded = false; posError = null; posTruncated = false;
     posFailedWallets = []; allPositions = [];
     liveActive = false; livePositionError = "";
+    resetPriceFeed();
     nextLiveRefreshAt = 0;
     updateRefreshCountdown();
     renderPositions();
@@ -1927,7 +2015,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(ok.length) posLoaded = true;
     else if(posFailedWallets.length) posError = results.find(r => !r.ok).err;
     renderPositions();
-    pollLivePrices(); // first live tick right away instead of waiting the interval
+    tickLiveRefresh(); // first live ticks right away instead of waiting the intervals
   }
   // positions honor the search box, the Single/Combo chips, and the status chips.
   // basePositions is the set BEFORE status filtering — the chip counts read it.
@@ -2020,7 +2108,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       '<td class="mono">'+esc(p.endDate||"")+"</td>",
       '<td class="num mono pos-fee-cell" data-pi="'+idx+'" title="Estimated taker fees for trades in the selected search window and date range; makers pay no fee">'+positionFeeText(p)+"</td>"
     ];
-    return '<tr class="pos-row'+(expandedPos.has(posKey(p))?" expanded":"")+'" data-pi="'+idx+'">'
+    return '<tr class="pos-row'+(posStatus(p) === "notredeemed" ? " pos-redeemable" : "")+(expandedPos.has(posKey(p))?" expanded":"")+'" data-pi="'+idx+'">'
       + posCols.order.map(i => cells[i]).join("") + "</tr>";
   }
   function renderPositions(){
@@ -2088,6 +2176,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(posLoaded && posFailedWallets.length)
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
     if(livePositionError) note += (note ? " · " : "") + livePositionError;
+    if(livePriceError) note += (note ? " · " : "") + livePriceError;
     if(feedTruncated) note += " · activity history is incomplete; some positions or fees may be missing";
     return note;
   }
@@ -2096,16 +2185,28 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       + (liveActive ? '<span class="live-pill"><span class="live-dot"></span>live</span>' : "");
   }
 
-  // ---------- live single holdings and prices (1s after each completed refresh) ----------
+  // ---------- live single holdings (3s) and independent market prices (1s) ----------
   // The Data API owns shares and cost basis; CLOB midpoints only supply prices.
-  // Reconcile holdings first, then value those latest shares at the live price.
-  const LIVE_MS = 1000, LIVE_MAX_TOKENS = 600, LIVE_CHUNK = 300;
+  const LIVE_MS = 3000, LIVE_MAX_TOKENS = 600, LIVE_CHUNK = 300;
+  const PRICE_MS = 1000;
   let liveBusy = false, liveActive = false;
   let livePositionError = "";
+  let livePriceError = "", priceBusyRun = null, nextPriceRefreshAt = 0;
+  const latestMidpoints = new Map();
   let nextLiveRefreshAt = 0;
   let liveActivityCheckedAt = 0;
   let nextHistoryRefreshAt = 0;
   let portfolioBusyRun = null;
+  function resetPriceFeed(){
+    livePriceError = ""; nextPriceRefreshAt = 0; latestMidpoints.clear();
+  }
+  function applyPositionMidpoint(p, price){
+    const oldValue = Number(p.currentValue) || 0;
+    p.curPrice = price;
+    p.currentValue = (Number(p.size) || 0) * price;
+    p.cashPnl = (Number(p.cashPnl) || 0) + p.currentValue - oldValue;
+    if(Number(p.initialValue)) p.percentPnl = p.cashPnl / Number(p.initialValue) * 100;
+  }
   function activityRecordKey(r){
     return [(r.proxyWallet || "").toLowerCase(),r.type,r.transactionHash,r.timestamp,r.asset,r.conditionId,r.outcome,r.side,r.size,r.price].join("|");
   }
@@ -2224,6 +2325,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const byKey = new Map(previous.map(p => [positionSnapshotKey(p), p]));
       const oldValue = previous.reduce((s,p) => s + (Number(p.currentValue) || 0), 0);
       const rows = result.rows.map(fresh => {
+        // Keep a recent CLOB mark while accepting the latest shares and cost
+        // basis. Otherwise the slower Data API can make prices jump backwards.
+        const quote = latestMidpoints.get(String(fresh.asset));
+        if(quote && Date.now() - quote.updatedAt <= LIVE_MS && posStatus(fresh) === "open")
+          applyPositionMidpoint(fresh, quote.price);
         const p = byKey.get(positionSnapshotKey(fresh));
         if(!p){
           posHistCache.delete(posKey(fresh));
@@ -2264,14 +2370,21 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function updateRefreshCountdown(){
     const label = $("refreshCountdown");
     if(!$("posWrap").classList.contains("active")) return;
-    if(posLoading) label.textContent = "Loading positions…";
-    else if(!posLoaded) label.textContent = "Refresh unavailable";
-    else if(!currentWallets.length) label.textContent = "No wallets to refresh";
-    else if(document.hidden) label.textContent = "Refresh paused";
-    else if(liveBusy) label.textContent = "Refreshing…";
-    else label.textContent = (livePositionError ? "Retry refresh in " : "Next refresh in ") + Math.max(0, Math.ceil((nextLiveRefreshAt - Date.now()) / 1000)) + "s";
+    let state = "live", bars = Math.max(1, Math.min(3, Math.ceil((nextLiveRefreshAt - Date.now()) / 1000)));
+    let description;
+    if(posLoading){ state = "loading"; bars = 3; description = "Loading positions"; }
+    else if(!posLoaded){ state = "unavailable"; bars = 0; description = "Position refresh unavailable"; }
+    else if(!currentWallets.length){ state = "unavailable"; bars = 0; description = "No wallets to refresh"; }
+    else if(document.hidden){ state = "paused"; bars = 0; description = "Refresh paused while this browser tab is hidden"; }
+    else if(liveBusy){ state = "refreshing"; bars = 3; description = "Refreshing positions"; }
+    else if(livePositionError){ state = "error"; description = "Retrying in " + bars + "s. " + livePositionError; }
+    else description = "Next holdings refresh in " + bars + "s. Holdings sync every 3 seconds; open-position prices are checked every second.";
+    label.dataset.state = state;
+    label.dataset.bars = String(bars);
+    label.title = description;
+    label.setAttribute("aria-label", description);
   }
-  async function pollLivePrices(){
+  async function pollLiveHoldings(){
     updateRefreshCountdown();
     if(liveBusy || posLoading || !posLoaded || document.hidden) return;
     if(!$("posWrap").classList.contains("active")) return;
@@ -2289,41 +2402,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const history = needsHistory ? await refreshPositionHistory(myRun) : {failed:false};
       if(!history || myRun !== posRunSeq) return;
       if(needsHistory) nextHistoryRefreshAt = Date.now() + 60000;
-      let totalDelta = holdings.totalDelta;
-      const targets = allPositions.filter(p => !p.isCombo && p.asset && posStatus(p) === "open");
-      const tokens = [...new Set(targets.map(p => String(p.asset)))].slice(0, LIVE_MAX_TOKENS);
-      const chunks = [];
-      for(let i = 0; i < tokens.length; i += LIVE_CHUNK) chunks.push(tokens.slice(i, i + LIVE_CHUNK));
-      const parts = await Promise.allSettled(chunks.map(c =>
-        fetch("https://clob.polymarket.com/midpoints", {
-          method: "POST", headers: {"content-type": "application/json"},
-          body: JSON.stringify(c.map(t => ({token_id: t}))),
-          signal: AbortSignal.timeout(8000)
-        }).then(r => { if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })));
-      if(myRun !== posRunSeq) return; // a new search landed while we were fetching
-      const prices = Object.assign({}, ...parts.filter(p => p.status === "fulfilled").map(p => p.value));
-      for(const p of targets){
-        const px = Number(prices[String(p.asset)]);
-        if(!isFinite(px) || px <= 0) continue; // resolved/bookless tokens keep their last price
-        const old = Number(p.curPrice) || 0;
-        if(Math.abs(px - old) < 0.0005) continue;
-        const oldVal = Number(p.currentValue) || 0;
-        const oldPnl = Number(p.cashPnl) || 0;
-        rememberPositionChange(changed, p);
-        p.curPrice = px;
-        p.currentValue = (Number(p.size) || 0) * px;
-        p.cashPnl = oldPnl + (p.currentValue - oldVal);
-        if(Number(p.initialValue)) p.percentPnl = p.cashPnl / Number(p.initialValue) * 100;
-        totalDelta += p.currentValue - oldVal;
-      }
       livePositionError = failedWallets.length
         ? "Holdings refresh failed for " + failedWallets.map(short).join(", ") + "; showing last known holdings"
         : activity.failed ? "Activity refresh incomplete; new positions and fees may be delayed"
-        : history.failed ? "Position history refresh incomplete; some snapshots may be unavailable"
-        : parts.some(p => p.status === "rejected") ? "Live prices unavailable; showing latest reported prices" : "";
-      liveActive = !livePositionError;
+        : history.failed ? "Position history refresh incomplete; some snapshots may be unavailable" : "";
+      liveActive = !livePositionError && !livePriceError;
       if(structureChanged || activity.changed || history.changed){ posRenderKey = null; renderPositions(); }
-      applyLivePrices(changed, totalDelta);
+      applyLivePrices(changed, holdings.totalDelta);
       refreshPortfolioValue(myRun);
     }catch(e){
       if(myRun === posRunSeq){
@@ -2335,20 +2420,82 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     }
     finally{
       liveBusy = false;
-      // Schedule from completion so slow requests never overlap and the label
-      // counts down to the same deadline used by the polling timer.
+      // Schedule from completion so slow requests never overlap and the bars
+      // count down to the same deadline used by the polling timer.
       nextLiveRefreshAt = myRun === posRunSeq ? Date.now() + LIVE_MS : 0;
       updateRefreshCountdown();
     }
   }
-  // stock-ticker motion: the number rolls from old to new over ~700ms (easeOut)
-  // while the cell flashes green/red, and the price keeps a last-tick ▲/▼ arrow
+  async function pollLivePrices(){
+    if(priceBusyRun !== null || posLoading || !posLoaded || document.hidden) return;
+    if(!$("posWrap").classList.contains("active") || !currentWallets.length || Date.now() < nextPriceRefreshAt) return;
+    const myRun = posRunSeq, startedAt = Date.now();
+    const tokens = [...new Set(allPositions.filter(p => !p.isCombo && p.asset && posStatus(p) === "open")
+      .map(p => String(p.asset)))].slice(0, LIVE_MAX_TOKENS);
+    if(!tokens.length){
+      const hadPriceError = !!livePriceError;
+      livePriceError = ""; liveActive = !livePositionError;
+      if(hadPriceError) setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
+      nextPriceRefreshAt = startedAt + PRICE_MS; return;
+    }
+    priceBusyRun = myRun;
+    try{
+      const chunks = [];
+      for(let i = 0; i < tokens.length; i += LIVE_CHUNK) chunks.push(tokens.slice(i, i + LIVE_CHUNK));
+      const parts = await Promise.allSettled(chunks.map(c =>
+        fetch("https://clob.polymarket.com/midpoints", {
+          method:"POST", headers:{"content-type":"application/json"},
+          body:JSON.stringify(c.map(t => ({token_id:t}))), signal:AbortSignal.timeout(8000)
+        }).then(async r => {
+          if(!r.ok) throw new Error("HTTP " + r.status);
+          const prices = await r.json();
+          if(!prices || Array.isArray(prices) || typeof prices !== "object") throw new Error("Invalid prices response");
+          return prices;
+        })));
+      if(myRun !== posRunSeq || document.hidden || !$("posWrap").classList.contains("active")) return;
+      const prices = Object.assign({}, ...parts.filter(p => p.status === "fulfilled").map(p => p.value));
+      const quotes = new Map();
+      for(const token of tokens){
+        const price = Number(prices[token]);
+        if(Number.isFinite(price) && price > 0 && price <= 1){
+          quotes.set(token, price);
+          latestMidpoints.set(token, {price, updatedAt:Date.now()});
+        }
+      }
+      const changed = new Map();
+      // Holdings may have changed while the price request was in flight. Use
+      // only CURRENT open rows and their latest shares, never captured objects.
+      for(const p of allPositions){
+        if(p.isCombo || posStatus(p) !== "open") continue;
+        const price = quotes.get(String(p.asset));
+        if(price == null || Math.abs(price - (Number(p.curPrice) || 0)) < 0.0005) continue;
+        rememberPositionChange(changed, p);
+        applyPositionMidpoint(p, price);
+      }
+      livePriceError = parts.some(p => p.status === "rejected") ? "Live prices unavailable; showing latest reported prices" : "";
+      liveActive = !livePositionError && !livePriceError;
+      applyLivePrices(changed, 0, true);
+    }catch(e){
+      if(myRun === posRunSeq){
+        livePriceError = "Live prices unavailable; showing latest reported prices";
+        liveActive = false;
+        setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
+      }
+    }finally{
+      if(priceBusyRun === myRun){
+        priceBusyRun = null;
+        nextPriceRefreshAt = myRun === posRunSeq ? startedAt + PRICE_MS : 0;
+      }
+    }
+  }
+  // Stock-ticker number motion (~700ms). Cash updates may also tint the cell;
+  // position prices leave colour to the row's profit/loss pulse.
   function tweenCell(td, from, to, fmt, dir){
     const tok = (td.__tok = (td.__tok || 0) + 1); // newer tween on the same cell wins
     if(td.__raf){ cancelAnimationFrame(td.__raf); td.__raf = null; }
     td.classList.remove("px-up","px-down");
     void td.offsetWidth;
-    td.classList.add(dir);
+    if(dir) td.classList.add(dir);
     const done = () => { td.__raf = null; td.innerHTML = fmt(to); };
     if(!isFinite(from) || matchMedia("(prefers-reduced-motion: reduce)").matches){ done(); return; }
     const dur = 700, t0 = performance.now();
@@ -2363,9 +2510,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // rAF freezes in hidden tabs — guarantee the final value lands regardless
     setTimeout(() => { if(tok === td.__tok && td.__raf){ cancelAnimationFrame(td.__raf); done(); } }, dur + 300);
   }
-  const tickArrow = dir => ' <span class="tick-arrow ' + (dir === "px-up" ? "up" : "down") + '">'
+  const tickArrow = (dir, tone = dir) => ' <span class="tick-arrow ' + (tone === "px-up" ? "up" : tone === "px-down" ? "down" : "") + '">'
     + (dir === "px-up" ? "▲" : "▼") + "</span>";
-  function applyLivePrices(changed, totalDelta){
+  function flashPositionPrice(row, p, oldPrice){
+    if(posStatus(p) !== "open" || Math.abs(Number(p.curPrice) - Number(oldPrice)) < 0.0005) return;
+    row.classList.remove("price-profit", "price-loss");
+    const pnl = Number(p.cashPnl) || 0;
+    if(pnl === 0) return;
+    void row.offsetWidth; // restart the brief pulse on each actual price change
+    row.classList.add(pnl > 0 ? "price-profit" : "price-loss");
+  }
+  function applyLivePrices(changed, totalDelta, priceTick = false){
     const body = $("posBody");
     // Use original column indices so reordered/hidden columns still update.
     const sizePos = posCols.order.indexOf(3), avgPos = posCols.order.indexOf(4), costPos = posCols.order.indexOf(6);
@@ -2379,28 +2534,41 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       if(!ch) return;
       const row = rowByPi.get(i);
       if(!row) return;
+      row.classList.toggle("pos-redeemable", posStatus(p) === "notredeemed");
       const chDir = Number(p.curPrice) >= ch.oldPx ? "px-up" : "px-down";
+      const tone = Number(p.cashPnl) > 0 ? "px-up" : Number(p.cashPnl) < 0 ? "px-down" : "";
+      if(priceTick) flashPositionPrice(row, p, ch.oldPx);
+      const updateCell = (td, old, value, fmt) => {
+        if(priceTick) tweenCell(td, old, value, fmt); // the whole row owns the flash colour
+        else{
+          // Data synchronization can finish after a newer price tick. Patch the
+          // current value directly rather than replaying an old price animation.
+          if(td.__raf){ cancelAnimationFrame(td.__raf); td.__raf = null; }
+          td.__tok = (td.__tok || 0) + 1;
+          td.classList.remove("px-up", "px-down");
+          td.innerHTML = fmt(value);
+        }
+      };
       const updateHolding = (col, old, value, fmt) => {
         const td = row.cells[col];
         if(!td || old === value) return;
         if(value == null || !Number.isFinite(Number(value))){ td.textContent = "—"; return; }
-        tweenCell(td, old == null ? NaN : Number(old), Number(value), fmt, Number(value) >= Number(old) ? "px-up" : "px-down");
+        updateCell(td, old == null ? NaN : Number(old), Number(value), fmt);
       };
       updateHolding(sizePos, ch.oldSize, p.size, fmtNum);
       updateHolding(avgPos, ch.oldAvg, p.avgPrice, v => v.toFixed(3));
       updateHolding(costPos, ch.oldCost, p.initialValue, v => "$" + fmtUsd(v));
       const cur = row.cells[curPos], val = row.cells[valPos], pnlTd = row.cells[pnlPos];
-      if(cur && ch.oldPx !== Number(p.curPrice)) tweenCell(cur, ch.oldPx, Number(p.curPrice), v => v.toFixed(3) + tickArrow(chDir), chDir);
-      if(val && ch.oldVal !== Number(p.currentValue)) tweenCell(val, ch.oldVal, Number(p.currentValue), v => "$" + fmtUsd(v), Number(p.currentValue) >= ch.oldVal ? "px-up" : "px-down");
+      if(cur && ch.oldPx !== Number(p.curPrice)) updateCell(cur, ch.oldPx, Number(p.curPrice), v => v.toFixed(3) + (priceTick ? tickArrow(chDir, tone) : ""));
+      if(val && ch.oldVal !== Number(p.currentValue)) updateCell(val, ch.oldVal, Number(p.currentValue), v => "$" + fmtUsd(v));
       if(pnlTd){
         const pnl = Number(p.cashPnl) || 0;
         const initial = Number(p.initialValue) || 0;
         pnlTd.classList.toggle("pos", pnl >= 0);
         pnlTd.classList.toggle("neg", pnl < 0);
-        tweenCell(pnlTd, ch.oldPnl, pnl, v =>
+        updateCell(pnlTd, ch.oldPnl, pnl, v =>
           (v < 0 ? "-$" : "$") + fmtUsd(Math.abs(v))
-          + (initial ? ' <span class="pnl-pct">(' + (v >= 0 ? "+" : "") + (v / initial * 100).toFixed(1) + '%)</span>' : ""),
-          pnl >= ch.oldPnl ? "px-up" : "px-down");
+          + (initial ? ' <span class="pnl-pct">(' + (v >= 0 ? "+" : "") + (v / initial * 100).toFixed(1) + '%)</span>' : ""));
       }
     });
     // Portfolio value comes from an absolute /value snapshot. Adding position
@@ -2408,8 +2576,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
   }
   function tickLiveRefresh(){
-    if(Date.now() >= nextLiveRefreshAt) pollLivePrices();
+    if(Date.now() >= nextLiveRefreshAt) pollLiveHoldings();
     else updateRefreshCountdown();
+    if(Date.now() >= nextPriceRefreshAt) pollLivePrices();
   }
   setInterval(tickLiveRefresh, 100);
   document.addEventListener("visibilitychange", tickLiveRefresh);

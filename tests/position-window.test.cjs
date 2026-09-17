@@ -355,16 +355,16 @@ test('a recovered history snapshot rerenders without new holdings or activity an
   let renders = 0;
   Object.assign(context, {
     posRunSeq: 1, posLoaded: true, posLoading: false, posTruncated: false,
-    liveBusy: false, liveActive: false, livePositionError: '', nextLiveRefreshAt: 0, nextHistoryRefreshAt: 0,
-    LIVE_MS: 1000, LIVE_MAX_TOKENS: 600, LIVE_CHUNK: 300,
+    liveBusy: false, liveActive: false, livePositionError: '', livePriceError: '', nextLiveRefreshAt: 0, nextHistoryRefreshAt: 0,
+    LIVE_MS: 3000, LIVE_MAX_TOKENS: 600, LIVE_CHUNK: 300,
     document: {hidden: false},
     refreshPositionHoldings: async () => ({changed: new Map(), totalDelta: 0, structureChanged: false, failedWallets: []}),
     refreshPositionActivity: async () => ({changed: false, failed: false}),
     updateRefreshCountdown() {}, applyLivePrices() {}, refreshPortfolioValue() {},
     renderPositions: () => { renders++; context.posRendered = context.visiblePositions(); },
   });
-  vm.runInContext(['refreshPositionHistory', 'pollLivePrices'].map(productionFunction).join('\n'), context);
-  await context.pollLivePrices();
+  vm.runInContext(['refreshPositionHistory', 'pollLiveHoldings'].map(productionFunction).join('\n'), context);
+  await context.pollLiveHoldings();
   assert.equal(calls.length, 1);
   assert.equal(new URL(calls[0].url).pathname, '/closed-positions');
   assert.equal(renders, 1, 'a history-only change must refresh the visible table');
