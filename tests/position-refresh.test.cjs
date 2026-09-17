@@ -54,7 +54,7 @@ function harness(options = {}) {
     URL, URLSearchParams, AbortSignal,
     console: {warn: (...args) => events.push(['warn', ...args])},
     POS_MAX_PAGES: 4,
-    LIVE_MS: 10000,
+    LIVE_MS: 1000,
     LIVE_MAX_TOKENS: 600,
     LIVE_CHUNK: 300,
     allPositions: options.positions || [],

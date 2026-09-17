@@ -356,7 +356,7 @@ test('a recovered history snapshot rerenders without new holdings or activity an
   Object.assign(context, {
     posRunSeq: 1, posLoaded: true, posLoading: false, posTruncated: false,
     liveBusy: false, liveActive: false, livePositionError: '', nextLiveRefreshAt: 0, nextHistoryRefreshAt: 0,
-    LIVE_MS: 10000, LIVE_MAX_TOKENS: 600, LIVE_CHUNK: 300,
+    LIVE_MS: 1000, LIVE_MAX_TOKENS: 600, LIVE_CHUNK: 300,
     document: {hidden: false},
     refreshPositionHoldings: async () => ({changed: new Map(), totalDelta: 0, structureChanged: false, failedWallets: []}),
     refreshPositionActivity: async () => ({changed: false, failed: false}),

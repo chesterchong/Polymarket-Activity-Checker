@@ -602,7 +602,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         </span>
         <span id="chips" class="chips"></span>
         <span class="flex-spacer"></span>
-        <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" title="Single-market holdings and open-position prices refresh every 10 seconds">Next refresh in 10s</span>
+        <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" title="Single-market holdings and open-position prices refresh 1 second after each request completes">Next refresh in 1s</span>
         <button class="btn btn-ghost" id="resetBtn" title="Reset all filters">Reset filters</button>
       </div>
     </div>
@@ -2094,15 +2094,16 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       + (liveActive ? '<span class="live-pill"><span class="live-dot"></span>live</span>' : "");
   }
 
-  // ---------- live single holdings and prices (10s after each completed refresh) ----------
+  // ---------- live single holdings and prices (1s after each completed refresh) ----------
   // The Data API owns shares and cost basis; CLOB midpoints only supply prices.
   // Reconcile holdings first, then value those latest shares at the live price.
-  const LIVE_MS = 10000, LIVE_MAX_TOKENS = 600, LIVE_CHUNK = 300;
+  const LIVE_MS = 1000, LIVE_MAX_TOKENS = 600, LIVE_CHUNK = 300;
   let liveBusy = false, liveActive = false;
   let livePositionError = "";
   let nextLiveRefreshAt = 0;
   let liveActivityCheckedAt = 0;
   let nextHistoryRefreshAt = 0;
+  let portfolioBusyRun = null;
   function activityRecordKey(r){
     return [(r.proxyWallet || "").toLowerCase(),r.type,r.transactionHash,r.timestamp,r.asset,r.conditionId,r.outcome,r.side,r.size,r.price].join("|");
   }
@@ -2175,6 +2176,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return {changed, failed:snapshots.some(s => s.failed || s.truncated)};
   }
   async function refreshPortfolioValue(myRun){
+    if(portfolioBusyRun === myRun) return;
+    portfolioBusyRun = myRun;
     try{
       const values = await Promise.all(currentWallets.map(async addr => {
         const res = await fetchWithRetry("https://data-api.polymarket.com/value?user=" + addr, 2, 8000, {cache:"no-store"});
@@ -2185,6 +2188,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       }));
       if(myRun === posRunSeq) $("stPortfolio").textContent = "$" + fmtUsd(values.reduce((s,v) => s+v, 0));
     }catch(e){ if(myRun === posRunSeq) $("stPortfolio").textContent = "–"; }
+    finally{ if(portfolioBusyRun === myRun) portfolioBusyRun = null; }
   }
   function positionSnapshotKey(p){
     return ((p.proxyWallet || "") + "|" + (p.asset || ((p.conditionId || "") + "|" + (p.outcome || "")))).toLowerCase();
@@ -2405,7 +2409,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(Date.now() >= nextLiveRefreshAt) pollLivePrices();
     else updateRefreshCountdown();
   }
-  setInterval(tickLiveRefresh, 1000);
+  setInterval(tickLiveRefresh, 100);
   document.addEventListener("visibilitychange", tickLiveRefresh);
 
   // ---------- live wallet cash balance (on-chain balanceOf via public RPC) ----------
