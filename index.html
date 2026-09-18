@@ -848,15 +848,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     button.title = label;
     input.placeholder = savedAddressText || "0x...";
     input.title = savedAddressText && !input.value ? "Press Tab or double-click to fill saved addresses" : "";
-    note.textContent = message || (savedAddressText
-      ? (!input.value ? "Press Tab to auto fill" : saved ? "Address saved in this browser" : "Saved addresses available. Click the bookmark to replace them with this list.")
-      : "");
+    note.textContent = message || (savedAddressText && input.value && !saved
+      ? "Saved addresses available. Click the bookmark to replace them with this list." : "");
     note.classList.toggle("error", isError);
     note.hidden = !note.textContent;
   }
   $("saveAddressesBtn").addEventListener("click", () => {
     if(!$("addrInput").value.trim() && savedAddressText){
-      renderSavedAddresses("Saved addresses kept. Enter new addresses to overwrite them.");
+      renderSavedAddresses();
       return;
     }
     const {valid, invalid} = parseAddresses($("addrInput").value);
@@ -868,7 +867,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     try{
       localStorage.setItem(SAVED_ADDRESSES_KEY, JSON.stringify(valid));
       savedAddressText = valid.join("\n");
-      renderSavedAddresses("Address saved in this browser");
+      renderSavedAddresses();
     }catch(e){
       renderSavedAddresses("Browser storage is unavailable. Saved addresses could not be changed.", true);
     }
