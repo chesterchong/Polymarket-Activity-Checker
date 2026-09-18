@@ -75,6 +75,7 @@ h1{font-size:16px; font-weight:600; letter-spacing:-.01em;}
 .icon-btn:hover{background:var(--muted);}
 .icon-btn:focus-visible{outline:2px solid var(--primary); outline-offset:2px;}
 .icon-btn svg{width:15px; height:15px;}
+#timezoneBtn{width:auto; min-width:88px; gap:6px; padding:0 10px; font-family:inherit; font-size:11px; font-weight:500; white-space:nowrap;}
 #timezoneBtn:disabled{opacity:.45; cursor:wait; background:var(--card);}
 #saveAddressesBtn.on{color:var(--primary); border-color:var(--primary);}
 #saveAddressesBtn.on svg{fill:currentColor;}
@@ -516,6 +517,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       </span>
       <button type="button" class="icon-btn" id="timezoneBtn" title="Time zone: GMT+8. Switch to ET" aria-label="Time zone: GMT+8. Switch to ET">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18z"/></svg>
+        <span id="timezoneButtonLabel" aria-hidden="true">GMT+8</span>
       </button>
       <button type="button" class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
         <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -3360,6 +3362,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const timezoneLabel = "Time zone: " + tzSel + ". Switch to " + (tzSel === "GMT+8" ? "ET" : "GMT+8");
     timezoneButton.title = timezoneLabel;
     timezoneButton.setAttribute("aria-label", timezoneLabel);
+    $("timezoneButtonLabel").textContent = tzSel;
     $("thTime").innerHTML = "Time (" + esc(tzSel) + ') <span id="sortArrow">' + (sortDir === "desc" ? "▼" : "▲") + "</span>";
     actCols.colNames[0] = "Time (" + tzSel + ")";
     $("marketTimeLabel").textContent = "Market time (" + tzSel + ")";
