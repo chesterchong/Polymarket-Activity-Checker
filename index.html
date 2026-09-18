@@ -81,6 +81,12 @@ h1{font-size:16px; font-weight:600; letter-spacing:-.01em;}
 .icon-btn svg{width:15px; height:15px;}
 #saveAddressesBtn.on{color:var(--primary); border-color:var(--primary);}
 #saveAddressesBtn.on svg{fill:currentColor;}
+.bookmark-control{position:relative; display:inline-flex;}
+.bookmark-feedback{position:absolute; top:calc(100% + 4px); left:50%; transform:translateX(-50%); color:var(--success); font-size:11px; white-space:nowrap; pointer-events:none;}
+#saveAddressesBtn.save-success{color:var(--success); border-color:var(--success); background:rgba(13,148,85,.14); --save-glow:rgba(13,148,85,.25); animation:bookmarkPulse .5s ease-out;}
+#saveAddressesBtn.save-error{color:var(--destructive); border-color:var(--destructive); background:rgba(223,34,37,.14); --save-glow:rgba(223,34,37,.25); animation:bookmarkPulse .5s ease-out;}
+@keyframes bookmarkPulse{0%,100%{box-shadow:0 0 0 0 transparent;}40%{box-shadow:0 0 0 4px var(--save-glow);}}
+@media (prefers-reduced-motion:reduce){#saveAddressesBtn.save-success,#saveAddressesBtn.save-error{animation:none;}}
 
 /* input card */
 .card{border:1px solid var(--border); background:var(--card);}
@@ -398,7 +404,6 @@ footer a{color:inherit;}
 .ta-wrap{position:relative;}
 #addrInput{word-break:break-all;}
 .address-note{padding:0 12px 10px; font-size:12px; color:var(--muted-foreground);}
-.address-note.error{color:var(--destructive);}
 
 /* segmented control — pill-shaped */
 .seg{display:inline-flex; border:1px solid var(--border); background:var(--card); border-radius:999px; overflow:hidden;}
@@ -505,9 +510,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <p class="sub">Paste one or more addresses, separated by commas or new lines.</p>
       </div>
       <div class="header-actions">
+      <span class="bookmark-control">
       <button type="button" class="icon-btn" id="saveAddressesBtn" title="Save addresses in this browser" aria-label="Save addresses in this browser">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
       </button>
+      <span class="bookmark-feedback" id="bookmarkFeedback" role="status" aria-live="polite"></span>
+      </span>
       <button type="button" class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
         <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         <svg id="iconSun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
@@ -839,7 +847,22 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const {valid, invalid} = parseAddresses(raw);
     return !invalid.length && valid.join("\n").toLowerCase() === savedAddressText.toLowerCase();
   }
-  function renderSavedAddresses(message = "", isError = false){
+  let bookmarkFeedbackTimer = null;
+  function clearBookmarkFeedback(){
+    clearTimeout(bookmarkFeedbackTimer);
+    bookmarkFeedbackTimer = null;
+    $("saveAddressesBtn").classList.remove("save-success", "save-error");
+    $("bookmarkFeedback").textContent = "";
+  }
+  function showBookmarkFeedback(success){
+    clearBookmarkFeedback();
+    const button = $("saveAddressesBtn");
+    void button.offsetWidth;
+    button.classList.add(success ? "save-success" : "save-error");
+    $("bookmarkFeedback").textContent = success ? "Saved" : "";
+    bookmarkFeedbackTimer = setTimeout(clearBookmarkFeedback, 2000);
+  }
+  function renderSavedAddresses(message = ""){
     const input = $("addrInput"), button = $("saveAddressesBtn"), note = $("addressNote");
     const saved = currentAddressesAreSaved();
     const label = savedAddressText && !saved ? "Overwrite saved addresses in this browser" : "Save addresses in this browser";
@@ -848,34 +871,37 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     button.title = label;
     input.placeholder = savedAddressText || "0x...";
     input.title = savedAddressText && !input.value ? "Press Tab or double-click to fill saved addresses" : "";
-    note.textContent = message || (savedAddressText && input.value && !saved
-      ? "Saved addresses available. Click the bookmark to replace them with this list." : "");
-    note.classList.toggle("error", isError);
+    note.textContent = message;
     note.hidden = !note.textContent;
   }
   $("saveAddressesBtn").addEventListener("click", () => {
-    if(!$("addrInput").value.trim() && savedAddressText){
-      renderSavedAddresses();
-      return;
-    }
+    renderSavedAddresses();
     const {valid, invalid} = parseAddresses($("addrInput").value);
     if(!valid.length || invalid.length){
-      renderSavedAddresses("Enter valid 0x wallet addresses before saving.", true);
-      $("addrInput").focus();
+      $("addrInput").setAttribute("aria-invalid", "true");
+      showBookmarkFeedback(false);
       return;
     }
+    $("addrInput").removeAttribute("aria-invalid");
     try{
       localStorage.setItem(SAVED_ADDRESSES_KEY, JSON.stringify(valid));
       savedAddressText = valid.join("\n");
       renderSavedAddresses();
+      showBookmarkFeedback(true);
     }catch(e){
-      renderSavedAddresses("Browser storage is unavailable. Saved addresses could not be changed.", true);
+      showBookmarkFeedback(false);
     }
   });
-  $("addrInput").addEventListener("input", () => renderSavedAddresses());
+  $("addrInput").addEventListener("input", () => {
+    clearBookmarkFeedback();
+    $("addrInput").removeAttribute("aria-invalid");
+    renderSavedAddresses();
+  });
   function fillSavedAddresses(){
     const input = $("addrInput");
     if(!savedAddressText || input.value) return false;
+    clearBookmarkFeedback();
+    input.removeAttribute("aria-invalid");
     input.value = savedAddressText;
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
