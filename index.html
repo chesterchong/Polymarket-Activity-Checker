@@ -2070,11 +2070,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     }
     return rows;
   }
-  async function fetchClosedPositions(addr){
+  async function fetchClosedPositions(addr, markets = []){
     const out = [], seen = new Set();
     for(let page = 0; page < POS_CLOSED_MAX_PAGES; page++){
       const url = "https://data-api.polymarket.com/closed-positions?" + new URLSearchParams({
-        user:addr, limit:"50", offset:String(page*50), sortBy:"TIMESTAMP", sortDirection:"DESC"
+        user:addr, limit:"50", offset:String(page*50), sortBy:"TIMESTAMP", sortDirection:"DESC",
+        ...(markets.length ? {market:markets.join(",")} : {})
       });
       const res = await fetchWithRetry(url, 2, 15000, {cache:"no-store"});
       if(!res.ok) throw new Error("HTTP " + res.status);
@@ -2090,6 +2091,39 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       if(Number(lastParams.start) > 1 && oldest != null && Number(oldest) < Number(lastParams.start)) return {rows:out, truncated:false};
     }
     return {rows:out, truncated:true};
+  }
+  async function fetchMissingClosedPositions(addr, knownRows){
+    // The wallet-wide closed feed can lag behind its market-specific queries.
+    // Reconcile missing outcomes against official snapshots, never trade sums.
+    const groups = positionActivityGroups(), represented = new Set();
+    for(const p of knownRows){
+      const group = positionGroupFor(p, groups);
+      if(group) represented.add(group);
+    }
+    const wallet = addr.toLowerCase(), markets = new Set();
+    for(const group of groups.values()){
+      if(represented.has(group) || !group.trades.length) continue;
+      const r = group.latest;
+      if(r.isCombo || (r.proxyWallet || "").toLowerCase() !== wallet) continue;
+      if(r.conditionId) markets.add(r.conditionId);
+    }
+    const ids = [...markets], rows = [], seen = new Set(knownRows.map(positionGroupKey));
+    const seenOutcomes = new Set(knownRows.map(positionOutcomeKey).filter(Boolean));
+    let truncated = false, failed = false;
+    for(let i = 0; i < ids.length; i += 20){
+      try{
+        const result = await fetchClosedPositions(addr, ids.slice(i, i + 20));
+        truncated ||= result.truncated;
+        for(const p of result.rows){
+          const key = positionGroupKey(p), outcomeKey = positionOutcomeKey(p);
+          if(seen.has(key) || (outcomeKey && seenOutcomes.has(outcomeKey))) continue;
+          seen.add(key);
+          if(outcomeKey) seenOutcomes.add(outcomeKey);
+          rows.push(p);
+        }
+      }catch(e){ failed = true; }
+    }
+    return {rows, truncated, failed};
   }
   // combo (parlay) positions come from a separate endpoint; map them onto the same
   // row shape. Price: resolved combos are 0/1 by status; open ones are estimated
@@ -2232,6 +2266,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         const closedP = fetchClosedPositions(addr)
           .catch(() => ({rows:[], truncated:false})); // additive, like combos
         const [singles, combos, redeems, closed] = await Promise.all([singlesP, combosP, redeemsP, closedP]);
+        if(myRun !== posRunSeq) return {ok:false, addr};
+        const missing = await fetchMissingClosedPositions(addr,
+          singles.out.concat(combos.rows, redeems.rows, closed.rows));
+        closed.rows.push(...missing.rows);
+        closed.truncated ||= missing.truncated;
         // key on market + outcome: selling one side of a market must still show
         // when the other side is held or was redeemed
         const closedByKey = new Map(closed.rows.map(p => [positionGroupKey(p), p]));
@@ -2486,15 +2525,20 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
   async function refreshPositionHistory(myRun){
     const snapshots = await Promise.all(currentWallets.map(async addr => {
-      try{ return {addr, ...await fetchClosedPositions(addr)}; }
-      catch(e){ return {addr, failed:true}; }
+      let closed;
+      try{ closed = await fetchClosedPositions(addr); }
+      catch(e){ closed = {rows:[], truncated:false, failed:true}; }
+      if(myRun !== posRunSeq) return {addr, rows:[], failed:true};
+      const missing = await fetchMissingClosedPositions(addr, allPositions.concat(closed.rows));
+      return {addr, rows:closed.rows.concat(missing.rows),
+        truncated:closed.truncated || missing.truncated, failed:!!closed.failed || missing.failed};
     }));
     if(myRun !== posRunSeq) return null;
     const held = new Set(allPositions.filter(p => !p.isClosed && !p.isRedeemed).map(positionGroupKey));
     const existing = new Map(allPositions.map(p => [positionGroupKey(p), p]));
     let changed = false;
     for(const snapshot of snapshots){
-      if(snapshot.failed) continue;
+      if(!snapshot.rows.length) continue;
       if(snapshot.truncated) posTruncated = true;
       for(const p of snapshot.rows){
         const key = positionGroupKey(p);

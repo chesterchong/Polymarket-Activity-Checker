@@ -71,7 +71,7 @@ function harness(options = {}) {
       return elements.get(id);
     },
   });
-  const names = ['zonedMidnight', 'zonedDayBound', 'dateBound', 'transactionMatches', 'positionGroupKey', 'positionOutcomeKey', 'positionActivityGroups', 'positionGroupFor', 'positionTradesFor', 'positionViewRows', 'searchPositions', 'basePositions', 'visiblePositions', 'sortPositionsByMarketTime', 'posStatus', 'positionStatusGroup', 'matchesPositionStatus', 'fetchWithRetry', 'fetchClosedPositions', 'mapClosedPosition', 'computeFeeFor', 'feeUnavailable', 'positionFeeEstimate', 'positionFeeText', 'positionsCsv'];
+  const names = ['zonedMidnight', 'zonedDayBound', 'dateBound', 'transactionMatches', 'positionGroupKey', 'positionOutcomeKey', 'positionActivityGroups', 'positionGroupFor', 'positionTradesFor', 'positionViewRows', 'searchPositions', 'basePositions', 'visiblePositions', 'sortPositionsByMarketTime', 'posStatus', 'positionStatusGroup', 'matchesPositionStatus', 'fetchWithRetry', 'fetchClosedPositions', 'fetchMissingClosedPositions', 'mapClosedPosition', 'computeFeeFor', 'feeUnavailable', 'positionFeeEstimate', 'positionFeeText', 'positionsCsv'];
   const constants = [html.match(/^  const fmtUsd = .+$/m)[0], html.match(/^  const csvCell = [^]*?^  };/m)[0]];
   vm.runInContext(constants.concat(names.map(productionFunction)).join('\n'), context, {filename: 'index.html extracted position window functions'});
   return {context, elements, calls};
@@ -257,6 +257,178 @@ test('closed paging reports truncation when all allowed pages are full', async (
   assert.equal(calls.length, context.POS_CLOSED_MAX_PAGES);
   assert.equal(result.rows.length, 50 * context.POS_CLOSED_MAX_PAGES);
   assert.equal(result.truncated, true);
+});
+
+test('targeted closed history sends the official market CSV filter on every page', async () => {
+  const ids = ['0x' + '1'.repeat(64), '0x' + '2'.repeat(64)];
+  const firstPage = Array.from({length: 50}, (_, index) => position({
+    asset: 'targeted-' + index, conditionId: ids[index % 2], timestamp: 1000 - index,
+    totalBought: 10, realizedPnl: 2
+  }));
+  const {context, calls} = harness({fetch: async url => response(
+    new URL(url).searchParams.get('offset') === '0' ? firstPage : [])});
+  const result = await context.fetchClosedPositions(WALLET_A, ids);
+  assert.equal(result.rows.length, 50);
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    const url = new URL(call.url);
+    assert.equal(url.searchParams.get('market'), ids.join(','));
+    assert.equal(url.searchParams.get('user'), WALLET_A);
+    assert.equal(url.searchParams.get('limit'), '50');
+    assert.equal(url.searchParams.get('sortBy'), 'TIMESTAMP');
+  }
+});
+
+test('targeted history recovers a sold snapshot omitted by the general list and makes Close accurate', async () => {
+  const market = '0x' + '3'.repeat(64);
+  const records = [trade({conditionId: market}), trade({conditionId: market, side: 'SELL', timestamp: 160})];
+  const authoritative = position({conditionId: market, totalBought: 1000, avgPrice: 0.61,
+    realizedPnl: 17.13, timestamp: 170});
+  const {context, calls} = harness({records, params: {start: '100'}, fetch: async url => {
+    const target = new URL(url).searchParams.get('market');
+    return response(target === market ? [authoritative] : []);
+  }});
+  Object.assign(context, {posRunSeq: 1, posTruncated: false});
+  vm.runInContext(productionFunction('refreshPositionHistory'), context);
+  assert.equal(context.posStatus(context.positionViewRows()[0]), 'history');
+  const result = await context.refreshPositionHistory(1);
+  assert.equal(result.changed, true);
+  assert.equal(result.failed, false);
+  assert.deepEqual(calls.map(call => new URL(call.url).searchParams.get('market')), [null, market]);
+  context.posStatusFilter = new Set(['close']);
+  const rows = context.visiblePositions();
+  assert.equal(rows.length, 1);
+  assert.equal(context.posStatus(rows[0]), 'sold');
+  assert.equal(rows[0].isActivityOnly, undefined);
+  assert.equal(rows[0].size, 1000);
+  assert.equal(rows[0].avgPrice, 0.61);
+  assert.equal(rows[0].initialValue, 610);
+  assert.equal(rows[0].cashPnl, 17.13, 'use authoritative realized PnL, not inferred trade cash flow');
+});
+
+test('a failed general query still merges successful targeted history with a partial notice', async () => {
+  const market = '0x' + 'a'.repeat(64);
+  const {context, calls} = harness({records: [trade({conditionId: market})], fetch: async url =>
+    new URL(url).searchParams.has('market')
+      ? response([position({conditionId: market, totalBought: 25, realizedPnl: -3})])
+      : response({}, 503)});
+  Object.assign(context, {posRunSeq: 1, posTruncated: false});
+  vm.runInContext(productionFunction('refreshPositionHistory'), context);
+  const result = await context.refreshPositionHistory(1);
+  assert.equal(result.changed, true);
+  assert.equal(result.failed, true);
+  assert.ok(calls.some(call => new URL(call.url).searchParams.get('market') === market));
+  context.posStatusFilter = new Set(['close']);
+  const rows = context.visiblePositions();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].cashPnl, -3);
+  assert.equal(context.posStatus(rows[0]), 'sold');
+});
+
+test('a targeted history response from an older search cannot overwrite the current positions', async () => {
+  const market = '0x' + 'b'.repeat(64);
+  let releaseTarget, targetStarted;
+  const requested = new Promise(resolve => { targetStarted = resolve; });
+  const target = new Promise(resolve => { releaseTarget = resolve; });
+  const {context} = harness({records: [trade({conditionId: market})], fetch: url => {
+    if (new URL(url).searchParams.has('market')) { targetStarted(); return target; }
+    return response([]);
+  }});
+  Object.assign(context, {posRunSeq: 1, posTruncated: false});
+  vm.runInContext(productionFunction('refreshPositionHistory'), context);
+  const pending = context.refreshPositionHistory(1);
+  await requested;
+  context.posRunSeq = 2;
+  const current = position({asset: 'new-search-token', conditionId: 'new-search-market'});
+  context.allPositions = [current];
+  releaseTarget(response([position({conditionId: market, totalBought: 25, realizedPnl: 99})]));
+  assert.equal(await pending, null);
+  assert.equal(context.allPositions.length, 1);
+  assert.equal(context.allPositions[0], current);
+});
+
+test('targeted recovery keeps known open aliases and fetches only the missing outcome', async () => {
+  const market = '0x' + '4'.repeat(64);
+  const known = Object.freeze(position({asset: '', conditionId: market, outcome: 'Yes', cashPnl: 21}));
+  const records = [
+    trade({asset: 'yes-token', conditionId: market, outcome: 'Yes'}),
+    trade({asset: 'no-token', conditionId: market, outcome: 'No'})
+  ];
+  const {context, calls} = harness({records, positions: [known], fetch: async () => response([
+    position({asset: 'yes-token', conditionId: market, outcome: 'Yes', totalBought: 100, realizedPnl: -99}),
+    position({asset: 'no-token', conditionId: market, outcome: 'No', totalBought: 50, realizedPnl: -4}),
+    position({asset: 'no-token', conditionId: market, outcome: 'No', totalBought: 50, realizedPnl: -4})
+  ])});
+  const result = await context.fetchMissingClosedPositions(WALLET_A, [known]);
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0].url).searchParams.get('market'), market);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].outcome, 'No');
+  assert.equal(result.rows[0].cashPnl, -4);
+  assert.equal(known.cashPnl, 21);
+  assert.equal(known.isClosed, undefined);
+  context.allPositions.push(...result.rows);
+  const rows = context.positionViewRows();
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find(row => row.outcome === 'Yes'), known);
+});
+
+test('known snapshots, other wallets, combos and non-trade groups do not trigger targeted recovery', async () => {
+  const market = digit => '0x' + digit.repeat(64);
+  const known = position({asset: '', conditionId: market('5'), outcome: 'Yes'});
+  const records = [
+    trade({asset: 'known-token', conditionId: market('5'), outcome: 'Yes'}),
+    trade({proxyWallet: WALLET_B, asset: 'other-wallet', conditionId: market('6')}),
+    trade({isCombo: true, asset: 'combo', conditionId: market('7')}),
+    trade({type: 'REDEEM', asset: 'redeem-only', conditionId: market('8')}),
+    trade({asset: 'out-of-window', conditionId: market('9'), timestamp: 99})
+  ];
+  const {context, calls} = harness({records, params: {start: '100'}});
+  const result = await context.fetchMissingClosedPositions(WALLET_A, [known]);
+  assert.equal(calls.length, 0);
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.truncated, false);
+  assert.equal(result.failed, false);
+});
+
+test('missing-market recovery batches condition IDs without duplicates and merges returned snapshots once', async () => {
+  const market = index => '0x' + index.toString(16).padStart(64, '0');
+  const records = Array.from({length: 23}, (_, index) => trade({
+    asset: 'batch-' + index, conditionId: market(index + 1), outcome: 'Yes'
+  }));
+  records.push(trade({asset: 'extra-outcome', conditionId: market(1), outcome: 'No'}));
+  const {context, calls} = harness({records, fetch: async url => {
+    const ids = new URL(url).searchParams.get('market').split(',');
+    return response(ids.map(id => position({asset: 'closed-' + id, conditionId: id,
+      outcome: 'Yes', totalBought: 10, realizedPnl: 1})));
+  }});
+  const result = await context.fetchMissingClosedPositions(WALLET_A, []);
+  const batches = calls.map(call => new URL(call.url).searchParams.get('market').split(','));
+  assert.equal(batches.length, 2);
+  assert.deepEqual(batches.map(batch => batch.length), [20, 3]);
+  assert.equal(new Set(batches.flat()).size, 23);
+  assert.equal(result.rows.length, 23);
+  assert.equal(new Set(result.rows.map(row => context.positionGroupKey(row))).size, 23);
+  assert.equal(result.failed, false);
+});
+
+test('empty or failed targeted responses preserve History instead of inventing closed PnL', async () => {
+  const market = '0x' + 'f'.repeat(64);
+  for (const fails of [false, true]) {
+    const {context} = harness({records: [trade({conditionId: market})], fetch: async () =>
+      fails ? response({}, 503) : response([])});
+    const result = await context.fetchMissingClosedPositions(WALLET_A, []);
+    assert.equal(result.rows.length, 0);
+    assert.equal(result.failed, fails);
+    context.allPositions.push(...result.rows);
+    const rows = context.positionViewRows();
+    assert.equal(rows.length, 1);
+    assert.equal(context.posStatus(rows[0]), 'history');
+    assert.equal(rows[0].cashPnl, null);
+    assert.equal(rows[0].initialValue, null);
+    context.posStatusFilter = new Set(['close']);
+    assert.equal(context.visiblePositions().length, 0);
+  }
 });
 
 test('position fees sum only matching BUY and SELL trades in the committed window and export the same estimate', () => {
