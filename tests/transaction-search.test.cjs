@@ -128,7 +128,7 @@ test('changing search mode invalidates cached position rendering even with the s
   const c = harness({ records: [trade(), trade({ asset: 'other-token', conditionId: 'match-two', transactionHash: '0x9999' })], positions: [hashMatch, titleMatch] });
   Object.assign(c, {
     posRunSeq: 1, posLoading: false, posLoaded: true, posError: null, posRenderKey: null,
-    posRendered: [], POS_VIEW_CAP: 1000, expandedPos: new Set(), gridState: { positions: { signature: null } },
+    posRendered: [], POS_VIEW_CAP: 1000, expandedPos: new Set(),
     document: { querySelectorAll: () => [] },
     basePositions: () => c.searchPositions(), visiblePositions: () => c.searchPositions(),
     positionStatusGroup: () => 'open', matchesPositionStatus: () => true,

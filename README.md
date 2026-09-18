@@ -41,7 +41,7 @@ The window determines which positions appear and which trades contribute fees. P
 ## Display and sharing
 
 - Active Position starts with **Market time**, newest first, and **Wallet** hidden. Unknown times appear last; combos sort by their latest leg. Open **Columns** to change the layout or **Reset columns** to restore defaults.
-- The **Columns** panel also contains **Row groups** and **Values**. Drag columns into either section, or use its picker. Group rows by one or more fields and choose sum, average, min, max, or count for numeric values. Group rows and the table footer show totals across all loaded matching records, including those beyond the display limit. Settings are saved separately for each tab; unavailable values are excluded and marked with an asterisk. Fees remain estimates, separate from reported PnL.
+- Use the **Columns** sidebar tab to choose and reorder columns, and **Values** to select numeric totals with sum, average, min, max, or count. The table footer includes all loaded matching records, including those beyond the display limit. Value settings are saved separately for Activity and Active Position; unavailable values are excluded and marked with an asterisk. Fees remain estimates, separate from reported PnL.
 - Drag a column header's edge to resize it; double-click the edge to reset widths.
 - **GMT+8** is the default timezone. Choose **ET** or **GMT+8** in the side panel for timestamps and date filtering; your choice is saved.
 - Open **Date range**, select the start and end dates in one calendar, then **Apply**. **Clear** removes the range when applied; Escape cancels unfinished changes.

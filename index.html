@@ -193,15 +193,17 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .side-bar{display:flex; align-items:stretch; flex:0 0 auto;}
 .side-panel{width:0; overflow:clip; border:1px solid var(--border); border-right:none; background:var(--card); transition:width .15s ease;}
 .side-bar.open .side-panel{width:220px;}
-.sp-inner{position:sticky; top:8px; width:220px; box-sizing:border-box; padding:14px; display:flex; flex-direction:column; gap:8px;}
-/* Reserve the sidebar's full height when collapsed, without exposing its controls. */
+.sidebar-stack{position:sticky; top:8px; width:220px; display:grid; grid-template-columns:220px; align-items:start;}
+.sp-inner{grid-area:1 / 1; width:220px; box-sizing:border-box; padding:14px; display:flex; flex-direction:column; gap:8px;}
+/* Both panes keep their layout space, so Columns sets the minimum card height. */
 .sp-inner[hidden]{display:flex; visibility:hidden; pointer-events:none;}
 .sp-inner{max-height:calc(100vh - 16px); overflow-y:auto; overscroll-behavior:contain;}
 .sp-title{font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted-foreground);}
 .sp-reset{margin-top:8px; align-self:flex-start; font-size:12px; height:28px; padding:0 10px; border-radius:999px;}
 .side-tabs{border:1px solid var(--border); background:var(--card); flex:0 0 auto;}
+.side-tab-stack{position:sticky; top:8px; display:flex; flex-direction:column;}
 .side-tab{
-  position:sticky; top:8px; writing-mode:vertical-rl;
+  writing-mode:vertical-rl;
   display:flex; align-items:center; gap:7px;
   border:none; background:transparent; color:var(--muted-foreground);
   font-family:inherit; font-size:12px; letter-spacing:.04em;
@@ -209,7 +211,8 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 }
 .side-tab:hover{color:var(--foreground);}
 .side-tab:focus-visible{outline:2px solid var(--primary); outline-offset:-3px;}
-.side-bar.open .side-tab{color:var(--primary); box-shadow:inset -2px 0 0 var(--primary);}
+.side-tab[aria-expanded="true"]{color:var(--primary); box-shadow:inset -2px 0 0 var(--primary);}
+.side-tab.is-drop-target{color:var(--primary); background:var(--muted);}
 .side-tab .dot{display:none; width:6px; height:6px; border-radius:50%; background:var(--primary);}
 .side-tab.has-hidden .dot{display:block;}
 
@@ -486,12 +489,12 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
 @media (max-width:640px){ .stat .value{font-size:15px;} input[type="search"]{width:130px;} }
 </style>
-<link rel="stylesheet" href="assets/winter.css?v=3">
+<link rel="stylesheet" href="assets/winter.css?v=5">
 <link rel="preload" as="image" href="assets/winter-window.jpg">
 <script defer src="assets/winter.js"></script>
 <link rel="stylesheet" href="assets/date-range.css?v=3">
-<link rel="stylesheet" href="assets/values-panel.css">
-<link rel="stylesheet" href="assets/grid-values.css">
+<link rel="stylesheet" href="assets/values-panel.css?v=5">
+<link rel="stylesheet" href="assets/grid-values.css?v=5">
 </head>
 <body>
 <div class="winter-scene" aria-hidden="true">
@@ -701,16 +704,23 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
     <div class="side-bar" id="sideBar">
       <div class="side-panel">
-        <div class="sp-inner" id="columnsPanel" role="region" aria-labelledby="sideTab" hidden>
+        <div class="sidebar-stack">
+        <div class="sp-inner" id="columnsPanel" role="region" aria-labelledby="sideTab" hidden inert>
           <div class="sp-title">Columns</div>
           <div id="colsList" class="cols-list"></div>
           <button type="button" class="btn btn-ghost sp-reset" id="colsReset" title="Restore this view's default column order and visibility">Reset columns</button>
+        </div>
+        <div class="sp-inner" id="valuesPanel" role="region" aria-labelledby="valuesTab" hidden inert>
           <div id="activityValues"></div>
           <div id="positionValues" hidden></div>
         </div>
+        </div>
       </div>
       <div class="side-tabs">
-        <button type="button" class="side-tab" id="sideTab" aria-expanded="false" aria-controls="columnsPanel" title="Columns, row groups and values">Columns<span class="dot"></span></button>
+        <div class="side-tab-stack">
+          <button type="button" class="side-tab" id="sideTab" aria-expanded="false" aria-controls="columnsPanel" title="Show or hide columns">Columns<span class="dot"></span></button>
+          <button type="button" class="side-tab" id="valuesTab" aria-expanded="false" aria-controls="valuesPanel" title="Show or hide values">Values</button>
+        </div>
       </div>
     </div>
     </div><!-- /.table-area -->
@@ -725,8 +735,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 <script src="assets/date-range.js?v=2"></script>
 <script src="assets/values-math.js"></script>
 <script src="assets/values-data.js"></script>
-<script src="assets/values-groups.js"></script>
-<script src="assets/values-panel.js"></script>
+<script src="assets/values-panel.js?v=5"></script>
 <script>
 (function(){
   "use strict";
@@ -755,10 +764,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let pagesFetched = 0;
   let fetching = false;
   let valuePanels = null;
-  const gridState = {
-    activity: {signature:null, collapsed:new Set()},
-    positions: {signature:null, collapsed:new Set()}
-  };
   let sortDir = "desc";   // Time column sort direction
   let marketFilter = null; // {conditionId, eventSlug, slug, title} set by clicking a row's type badge
   // category filter chips: multi-select inclusion filter; empty set = show everything.
@@ -1911,12 +1916,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const start = renderedCount;
     const next = filteredRecords.slice(start, start+pageSize);
     renderedCount += next.length;
-    if(valuePanels?.activity.getGroups().length){
-      body.innerHTML = filteredRecords.slice(0, renderedCount).map((r,i)=>rowHtml(r, i)).join("");
-    }else{
-      body.insertAdjacentHTML("beforeend", next.map((r,i)=>rowHtml(r, start+i)).join(""));
-    }
-    gridState.activity.signature = null;
+    body.insertAdjacentHTML("beforeend", next.map((r,i)=>rowHtml(r, start+i)).join(""));
     loadFeesFor(next); // async; fills "…" fee cells once schedules arrive
     $("loadMoreRow").classList.toggle("active", renderedCount < filteredRecords.length);
     $("loadMoreBtn").textContent = "Show more (" + (filteredRecords.length-renderedCount).toLocaleString() + " remaining)";
@@ -1974,20 +1974,37 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
   window.addEventListener("resize", ()=>{ if($("tableWrap").classList.contains("active")) updateGrabAffordance(); });
 
-  // ---------- collapsible columns sidebar ----------
+  // ---------- shared Columns / Values sidebar ----------
   const SIDEBAR_KEY = "pmac_cols_open";
-  function setSidebar(open){
+  const SIDEBAR_SECTION_KEY = "pmac_sidebar_section";
+  let sidebarSection = "columns";
+  function setSidebar(open, section = sidebarSection){
+    sidebarSection = section === "values" ? "values" : "columns";
     $("sideBar").classList.toggle("open", open);
-    $("sideTab").setAttribute("aria-expanded", String(open));
-    $("columnsPanel").hidden = !open;
-    try{ localStorage.setItem(SIDEBAR_KEY, open ? "1" : ""); }catch(e){}
+    for(const [tab, panel, name] of [["sideTab","columnsPanel","columns"], ["valuesTab","valuesPanel","values"]]){
+      const selected = open && sidebarSection === name;
+      $(tab).setAttribute("aria-expanded", String(selected));
+      $(panel).hidden = !selected;
+      $(panel).inert = !selected;
+    }
+    try{
+      localStorage.setItem(SIDEBAR_KEY, open ? "1" : "");
+      localStorage.setItem(SIDEBAR_SECTION_KEY, sidebarSection);
+    }catch(e){}
   }
-  $("sideTab").addEventListener("click", event => {
-    const open = !$("sideBar").classList.contains("open");
-    setSidebar(open);
-    if(open && event.detail === 0) $("colsList").querySelector("input")?.focus();
-  });
-  try{ if(localStorage.getItem(SIDEBAR_KEY) === "1") setSidebar(true); }catch(e){}
+  for(const [id, section] of [["sideTab","columns"], ["valuesTab","values"]]){
+    $(id).addEventListener("click", event => {
+      const open = !$("sideBar").classList.contains("open") || sidebarSection !== section;
+      setSidebar(open, section);
+      if(open && event.detail === 0){
+        const target = section === "columns" ? $("colsList")
+          : $($("tabPositions").classList.contains("on") ? "positionValues" : "activityValues");
+        target.querySelector("input,select,button")?.focus();
+      }
+    });
+  }
+  try{ setSidebar(localStorage.getItem(SIDEBAR_KEY) === "1", localStorage.getItem(SIDEBAR_SECTION_KEY)); }
+  catch(e){ setSidebar(false); }
   // scrolling any other way (scrollbar, shift+wheel, trackpad) hides the pill for
   // now but lets it reappear on a later search, since they may not have seen it
   $("tableWrap").addEventListener("scroll", ()=>dismissDragHint(false), {passive:true});
@@ -2397,7 +2414,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
     hideTooltip(); // rows are being replaced under any open tooltip
     $("posBody").innerHTML = posRendered.map((p, i) => posRowHtml(p, i)).join("");
-    gridState.positions.signature = null;
     // re-open detail rows the user had expanded before this re-render
     if(expandedPos.size)
       [...$("posBody").children].forEach(tr => {
@@ -3489,7 +3505,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const cfg = activeColsCfg();
     $("colsList").innerHTML = cfg.order.map((i, pos) =>
       '<label class="cols-item'+(cfg.hidden.has(i) ? ' off' : '')+'" draggable="true" data-pos="'+pos+'" data-col-index="'+i+'">'
-      + '<span class="drag-dots" draggable="true" title="Drag to reorder or add to row groups and values">⠿</span>'
+      + '<span class="drag-dots" draggable="true" title="Drag to reorder or add to Values">⠿</span>'
       + '<span class="cols-label">'+esc(cfg.colNames[i])+'</span>'
       + '<input class="cols-check" type="checkbox" aria-label="Show '+esc(cfg.colNames[i])+'" data-col="'+i+'"'+(cfg.hidden.has(i) ? "" : " checked")+'></label>'
     ).join("");
@@ -3509,6 +3525,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   });
   // drag one row of the list onto another to reorder (top/bottom half = above/below)
   let dragPos = null;
+  let draggedValueColumn = null;
   const colsListEl = $("colsList");
   // the ⠿ handle lives inside the <label>: block label activation so a plain
   // click on the handle doesn't toggle the checkbox
@@ -3524,12 +3541,33 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     try{ e.dataTransfer.setData("text/plain", String(dragPos)); }catch(_){}
     const index = Number(it.dataset.colIndex);
     const column = {id:String(index), label:activeColsCfg().colNames[index], valueField:valueFieldForColumn(activeColsCfg(), index)};
+    draggedValueColumn = column;
     e.dataTransfer.setData("application/x-pmac-column", JSON.stringify(column));
     activeValuesPanel()?.setDragColumn(column);
   });
   document.addEventListener("dragend", () => {
-    clearDropMarks(); dragPos = null;
+    clearDropMarks(); dragPos = null; draggedValueColumn = null;
+    $("valuesTab").classList.remove("is-drop-target");
     if(valuePanels) Object.values(valuePanels).forEach(panel => panel.setDragColumn(null));
+  });
+  // Drop directly on the Values tab so the Columns drag source remains visible
+  // for the full native drag; the pane switches only once the drop completes.
+  $("valuesTab").addEventListener("dragover", event => {
+    if(!draggedValueColumn?.valueField) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    $("valuesTab").classList.add("is-drop-target");
+  });
+  $("valuesTab").addEventListener("dragleave", () => $("valuesTab").classList.remove("is-drop-target"));
+  $("valuesTab").addEventListener("drop", event => {
+    if(!draggedValueColumn?.valueField) return;
+    event.preventDefault();
+    const field = draggedValueColumn.valueField;
+    clearDropMarks(); dragPos = null; draggedValueColumn = null;
+    $("valuesTab").classList.remove("is-drop-target");
+    setSidebar(true, "values");
+    activeValuesPanel()?.setDragColumn(null);
+    activeValuesPanel()?.addField(field);
   });
   colsListEl.addEventListener("dragover", e => {
     const it = e.target.closest(".cols-item"); if(!it || dragPos === null) return;
@@ -3555,7 +3593,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   cfgApplyOrder(posCols);
   applyTz(); // restore the saved time zone's labels + toggle state
 
-  // ---------- grouping and values (all matching rows, before display limits) ----------
+  // ---------- values (all matching rows, before display limits) ----------
   function valueFieldForColumn(cfg, index){
     return (cfg === posCols
       ? {3:"size",4:"avgPrice",5:"curPrice",6:"initialValue",7:"value",8:"cashPnl",10:"feeEstimate"}
@@ -3563,29 +3601,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
   function activeValuesPanel(){
     return valuePanels?.[$("tabPositions").classList.contains("on") ? "positions" : "activity"];
-  }
-  function gridGroupValue(view, row, field){
-    const index = Number(field), positions = view === "positions";
-    const cfg = positions ? posCols : actCols;
-    const valueField = valueFieldForColumn(cfg, index);
-    if(valueField){
-      const value = valueField === "feeEstimate" ? (positions ? positionFeeEstimate(row) : computeFeeFor(row))
-        : valueField === "value" ? (row.isRedeemed ? row.payout : row.currentValue) : row[valueField];
-      return {key:value == null ? null : Number(value), label:value == null ? "—" : String(value)};
-    }
-    const data = positions
-      ? {0:row.proxyWallet, 1:row.conditionId || row.eventSlug || row.slug || row.title,
-          2:row.outcome, 9:row.endDate, 11:positionMarketTimeText(row)}
-      : {0:row.timestamp, 1:row.proxyWallet, 2:row.type,
-          3:row.conditionId || row.eventSlug || row.slug || row.title,
-          4:row.outcome, 5:row.side, 10:row.transactionHash};
-    let key = data[index];
-    if(key === "" || key === "—") key = null;
-    let label = key == null ? "—" : String(key);
-    if(index === (positions ? 1 : 3)) label = row.title || label;
-    if(index === (positions ? 0 : 1) && key) { key = key.toLowerCase(); label = short(key); }
-    if(!positions && index === 0 && key != null) label = fmtTime(key);
-    return {key, label};
   }
   function gridAggregateCell(view, rows, field, op, samples){
     const result = ValuesMath.aggregate(rows.map(row => samples.get(row)?.[field]), op);
@@ -3608,25 +3623,21 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return {html:'<span class="grid-op">'+esc(op)+'</span><span class="grid-number'+tone+'">'+esc(text)+'</span>'
       + (notes.length ? '<span class="grid-partial" aria-label="'+esc(notes.join(" · "))+'">'+(loading || result.pending ? "…" : "*")+'</span>' : ""), title};
   }
-  function gridSummaryRow(view, rows, samples, node, depth=0){
+  function gridSummaryRow(view, rows, samples){
     const cfg = view === "positions" ? posCols : actCols;
     const config = valuePanels[view].getConfig();
     const ops = new Map(config.map(item => [item.field, item.op]));
     const visible = cfg.order.filter(index => !cfg.hidden.has(index));
     const labelColumn = visible.find(index => !ops.has(valueFieldForColumn(cfg, index))) ?? visible[0];
-    const collapsed = node && gridState[view].collapsed.has(node.key);
-    const label = node ? cfg.colNames[Number(node.field)] + ": " + node.label : "Total";
     const count = rows.length.toLocaleString();
-    const labelHtml = node
-      ? '<button type="button" class="grid-group-toggle" data-group-key="'+esc(node.key)+'" aria-expanded="'+!collapsed+'" title="'+esc(label)+'" style="--group-depth:'+depth+'"><span aria-hidden="true">'+(collapsed ? "▸" : "▾")+'</span><span class="grid-group-label">'+esc(label)+'</span><span class="grid-group-count">'+count+'</span></button>'
-      : '<span class="grid-total-label" title="All loaded rows matching the current filters">Total <span class="grid-group-count">'+count+'</span></span>';
+    const labelHtml = '<span class="grid-total-label" title="All loaded rows matching the current filters">Total <span class="grid-total-count">'+count+'</span></span>';
     const cells = cfg.order.map(index => {
       const field = valueFieldForColumn(cfg, index), op = ops.get(field);
       const value = op ? gridAggregateCell(view, rows, field, op, samples) : null;
       return '<td'+(value ? ' class="num" data-value-field="'+field+'" title="'+esc(value.title)+'"' : '')+'>'
         + (index === labelColumn ? labelHtml : "") + (value ? value.html : "") + '</td>';
     }).join("");
-    return '<tr class="'+(node ? 'grid-group-row' : 'grid-total-row')+'"'+(node ? ' data-group-key="'+esc(node.key)+'"' : '')+'>'+cells+'</tr>';
+    return '<tr class="grid-total-row">'+cells+'</tr>';
   }
   function refreshValues(){
     if(!valuePanels) return;
@@ -3638,55 +3649,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const rows = positions ? visiblePositions() : filteredRecords;
     const data = positions ? ValuesData.positions(rows, valuesHelpers) : ValuesData.activity(rows, valuesHelpers);
     const samples = new Map(rows.map((row, i) => [row, data[i]]));
-    const config = valuePanels[view].getConfig(), groups = valuePanels[view].getGroups();
+    const config = valuePanels[view].getConfig();
     const footer = $(positions ? "positionTotals" : "activityTotals");
     footer.hidden = !config.length;
     footer.innerHTML = config.length ? gridSummaryRow(view, rows, samples) : "";
-    if(!groups.length) return;
-    const tree = ValuesGroups.build(rows, groups, (row, field) => gridGroupValue(view, row, field));
-    const shown = positions ? posRendered : filteredRecords.slice(0, renderedCount);
-    // History-only rows are reconstructed on each read; identify positions by key.
-    const rowIdentity = row => positions ? positionGroupKey(row) : row;
-    const indexes = new Map(shown.map((row, i) => [rowIdentity(row), i]));
-    const nodes = new Map(), entries = [], state = gridState[view];
-    function visit(list, depth){
-      for(const node of list){
-        if(!node.rows.some(row => indexes.has(rowIdentity(row)))) continue;
-        nodes.set(node.key, node);
-        entries.push({node, depth});
-        if(state.collapsed.has(node.key)) continue;
-        if(node.children.length) visit(node.children, depth + 1);
-        else for(const row of node.rows) if(indexes.has(rowIdentity(row))) entries.push({row, index:indexes.get(rowIdentity(row))});
-      }
-    }
-    visit(tree, 0);
-    const cfg = positions ? posCols : actCols;
-    const signature = JSON.stringify([groups, cfg.order, [...cfg.hidden], config, entries.map(entry =>
-      entry.node ? [entry.node.key, entry.node.rows.length, state.collapsed.has(entry.node.key)] : entry.index)]);
-    const body = $(positions ? "posBody" : "tableBody");
-    if(signature !== state.signature){
-      state.signature = signature;
-      body.innerHTML = entries.map(entry => entry.node ? gridSummaryRow(view, entry.node.rows, samples, entry.node, entry.depth)
-        : positions ? posRowHtml(entry.row, entry.index) : rowHtml(entry.row, entry.index)).join("");
-      if(positions && expandedPos.size) [...body.querySelectorAll("tr.pos-row")].forEach(tr => {
-        const position = posRendered[Number(tr.dataset.pi)];
-        if(position && expandedPos.has(posKey(position))) expandPosRow(tr, position);
-      });
-    }else{
-      body.querySelectorAll(".grid-group-row").forEach(tr => {
-        const node = nodes.get(tr.dataset.groupKey);
-        if(!node) return;
-        tr.querySelectorAll("[data-value-field]").forEach(cell => {
-          const field = cell.dataset.valueField, op = config.find(item => item.field === field)?.op;
-          if(!op) return;
-          const value = gridAggregateCell(view, node.rows, field, op, samples);
-          // Keep a focused group toggle intact when every visible column is numeric.
-          cell.querySelectorAll(".grid-op,.grid-number,.grid-partial").forEach(el => el.remove());
-          cell.insertAdjacentHTML("beforeend", value.html);
-          cell.title = value.title;
-        });
-      });
-    }
   }
   const valuesHelpers = {computeFeeFor, feeUnavailable, positionFeeEstimate, positionTradesFor};
   const gridFields = {
@@ -3708,7 +3674,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const index = cfg.order.find(index => valueFieldForColumn(cfg, index) === item.field);
       if(index != null) cfg.hidden.delete(index);
     }
-    gridState[view].signature = null;
     clearDropMarks(); dragPos = null;
     Object.values(valuePanels).forEach(panel => panel.setDragColumn(null));
     cfgApplyHidden(cfg); buildColsList();
@@ -3716,26 +3681,15 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     else renderTableChunk(true);
   }
   valuePanels = Object.fromEntries(["activity", "positions"].map(view => {
-    const cfg = view === "positions" ? posCols : actCols;
     return [view, ValuesPanel.create({
       container: $(view === "positions" ? "positionValues" : "activityValues"),
-      storageKey: "pmac_"+view+"_grid_values", groupStorageKey: "pmac_"+view+"_row_groups",
-      fields: gridFields[view], groupFields: cfg.colNames.map((label, index) => ({id:String(index),label:label.replace(/\s*\((GMT\+8|ET)\)$/, "")})),
+      storageKey: "pmac_"+view+"_grid_values",
+      fields: gridFields[view],
       defaults: view === "positions" ? [{field:"cashPnl",op:"sum"},{field:"feeEstimate",op:"sum"}]
         : [{field:"usdcSize",op:"sum"},{field:"feeEstimate",op:"sum"}],
       onConfigChange: config => gridConfigChanged(view, config)
     })];
   }));
-  for(const [id, view] of [["tableBody","activity"],["posBody","positions"]]){
-    $(id).addEventListener("click", event => {
-      const button = event.target.closest(".grid-group-toggle");
-      if(!button) return;
-      const key = button.dataset.groupKey, collapsed = gridState[view].collapsed;
-      if(collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
-      refreshValues();
-      [...$(id).querySelectorAll(".grid-group-toggle")].find(el => el.dataset.groupKey === key)?.focus({preventScroll:true});
-    });
-  }
   refreshValues();
 
   // active-filter chip for badge-click market filters

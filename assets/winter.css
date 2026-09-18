@@ -9,9 +9,9 @@
   --border:rgba(91,75,55,.24);
   --input-bg:rgba(210,199,180,.38);
   --input-focus-bg:rgba(196,183,161,.55);
-  --destructive:#a13e35; --success:#286347; --redeemable:#365f7b;
-  --badge-buy-bg:#d0ddcc; --badge-buy-fg:#286347;
-  --badge-sell-bg:#e5c9bd; --badge-sell-fg:#a13e35;
+  --destructive:#912331; --success:#075735; --redeemable:#365f7b;
+  --badge-buy-bg:#167450; --badge-buy-fg:#ffffff;
+  --badge-sell-bg:#b53c40; --badge-sell-fg:#ffffff;
   --badge-neutral-bg:#cfc3af; --badge-neutral-fg:#554d42;
   --winter-base:#b8ac9a;
   --winter-wash:rgba(100,80,58,.14);
@@ -58,6 +58,13 @@ body{background:var(--winter-base); isolation:isolate;}
 .side-panel{border-radius:10px 0 0 10px;}
 .icon-btn{border-radius:8px; background:var(--card); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);}
 #tooltip{background:var(--winter-base); border-radius:8px;}
+/* Financial signals stay distinct against the warm daytime surfaces. */
+:root:not(.dark) .badge:is(.buy,.sell,.won,.lost){border-radius:4px; font-weight:600;}
+:root:not(.dark) td:is(.pos,.neg){font-weight:600;}
+:root:not(.dark) .grid-number.pos{color:var(--success); font-weight:600;}
+:root:not(.dark) .grid-number.neg{color:var(--destructive); font-weight:600;}
+:root:not(.dark) .pnl-pct{opacity:1;}
+:root:not(.dark) #posWrap tr.pos-redeemable>td .badge.buy{color:var(--badge-buy-fg)!important;}
 @media(max-width:640px){
   .winter-street{background-position:53% center;}
   .card,.summary,.results-bar,.side-panel,.side-tabs{-webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);}

@@ -1,8 +1,6 @@
 .vp-panel{width:100%; min-width:0; color:var(--foreground); font-family:inherit;}
 .vp-panel[hidden]{display:none;}
-.vp-section{margin-top:14px; padding-top:12px; border-top:1px solid var(--border);}
 .vp-heading{display:flex; align-items:center; gap:7px; margin-bottom:10px; color:var(--muted-foreground);}
-.vp-heading>svg{width:13px; height:13px; flex:0 0 13px;}
 .vp-sigma{width:13px; font-size:14px; line-height:18px; font-weight:600; text-align:center;}
 .vp-title{margin:0; font-size:11px; line-height:18px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;}
 .vp-list{display:flex; flex-direction:column; gap:5px;}

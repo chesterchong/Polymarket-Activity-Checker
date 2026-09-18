@@ -193,7 +193,6 @@ test('progressively arriving trade groups refresh the positions view with an unc
   Object.assign(context, {
     posRunSeq: 1, posLoading: false, posLoaded: true, posError: null,
     posRenderKey: null, posRendered: [], POS_VIEW_CAP: 1000,
-    gridState: {positions:{signature:null}},
     expandedPos: new Set(),
     document: {querySelectorAll: () => []},
     setPosNote() {}, buildPosNote: () => '', hideTooltip() {}, loadFeesFor() {},

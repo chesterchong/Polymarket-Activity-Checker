@@ -5,7 +5,6 @@ const test = require('node:test');
 const vm = require('node:vm');
 const ValuesMath = require('../assets/values-math.js');
 const ValuesData = require('../assets/values-data.js');
-const ValuesGroups = require('../assets/values-groups.js');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 function productionFunction(name) {
@@ -15,7 +14,6 @@ function productionFunction(name) {
 }
 
 const WALLET = '0x' + 'a'.repeat(40);
-const OTHER_WALLET = '0x' + 'b'.repeat(40);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[character]);
@@ -24,7 +22,7 @@ function harness(options = {}) {
   const view = options.view ?? 'activity';
   const records = options.rows ?? [];
   const configuration = options.config ?? [{field: view === 'positions' ? 'cashPnl' : 'usdcSize', op: 'sum'}];
-  const groupIds = options.groups ?? [];
+  const groupIds = options.obsoleteGroups ?? [];
   const elements = new Map();
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
@@ -49,18 +47,15 @@ function harness(options = {}) {
     positionTradesFor: row => row.trades ?? []
   };
   const context = vm.createContext({
-    ValuesMath, ValuesData, ValuesGroups, Intl, esc,
+    ValuesMath, ValuesData, Intl, esc,
     $: element,
     valuePanels: Object.fromEntries(['activity', 'positions'].map(name => [name, {
       getConfig: () => name === view ? configuration : [],
-      getGroups: () => name === view ? groupIds : []
+      // Previously persisted grouping preferences must not alter the flat table.
+      groupIds: name === view ? groupIds : []
     }])),
     actCols: config(11, ['Time', 'Wallet', 'Type', 'Market', 'Outcome', 'Side', 'Size', 'Price', 'USDC', 'Fee (est.)', 'Tx']),
     posCols: config(12, ['Wallet', 'Market', 'Outcome', 'Shares', 'Avg price', 'Cur price', 'Cost', 'Value', 'PnL', 'End date', 'Fees (est.)', 'Market time']),
-    gridState: {
-      activity: {signature: null, collapsed: new Set()},
-      positions: {signature: null, collapsed: new Set()}
-    },
     valuesHelpers: helpers,
     ...helpers,
     fetching: false, posLoading: false, feedTruncated: false,
@@ -68,24 +63,23 @@ function harness(options = {}) {
     filteredRecords: records,
     visiblePositions: () => records,
     renderedCount: options.cap ?? records.length,
-    posRendered: records.slice(0, options.cap ?? records.length),
-    expandedPos: new Set(),
-    rowHtml: (row, index) => `<tr class="activity-leaf" data-i="${index}"><td>${esc(row.title)}</td></tr>`,
-    posRowHtml: (row, index) => `<tr class="pos-row" data-pi="${index}"><td>${esc(row.title)}</td></tr>`,
-    positionMarketTimeText: row => row.marketTime ?? '—',
-    short: value => value.slice(0, 6) + '…' + value.slice(-4),
-    fmtTime: value => 'Time ' + value,
-    allPositions: [], lastParams: {}, dateBound: () => null,
-    positionGroupFor: () => undefined,
-    positionActivityGroups: () => new Map()
+    posRendered: records.slice(0, options.cap ?? records.length)
   });
   const fieldsSource = html.match(/^  const gridFields = \{[^]*?^  };/m);
   assert.ok(fieldsSource, 'Missing grid field metadata');
   vm.runInContext(fieldsSource[0] + '\n' + [
-    'valueFieldForColumn', 'gridGroupValue', 'gridAggregateCell', 'gridSummaryRow', 'refreshValues',
-    'positionGroupKey', 'positionViewRows'
+    'valueFieldForColumn', 'gridAggregateCell', 'gridSummaryRow', 'refreshValues'
   ].map(productionFunction).join('\n'), context);
-  return {context, elements, element, configuration, groupIds};
+  // Refreshing aggregate values must never replace rows, their order, or expanded details.
+  for (const id of ['tableBody', 'posBody']) {
+    const body = element(id);
+    const markup = `<tr data-existing="${id}"><td>Existing row</td></tr><tr class="expanded-detail"><td>Details</td></tr>`;
+    Object.defineProperty(body, 'innerHTML', {
+      get: () => markup,
+      set: () => assert.fail(`Values refresh rewrote ${id}`)
+    });
+  }
+  return {context, elements, element, configuration};
 }
 
 function numberInCell(markup, field) {
@@ -94,43 +88,61 @@ function numberInCell(markup, field) {
   return cell[1].match(/class="grid-number[^"]*">([^<]*)/)[1];
 }
 
-test('activity group totals and footer include every matching row beyond the displayed page', () => {
+test('activity total includes every matching row beyond the displayed page', () => {
   const rows = Array.from({length: 150}, (_, index) => ({
     type: 'TRADE', proxyWallet: WALLET, usdcSize: 1, fee: 0, title: 'Row ' + index
   }));
-  const {context, element} = harness({rows, cap: 2, groups: ['1']});
+  const {context, element} = harness({rows, cap: 2});
   context.refreshValues();
-  assert.equal(numberInCell(element('activityTotals').innerHTML, 'usdcSize'), '$150.00');
-  assert.equal(numberInCell(element('tableBody').innerHTML, 'usdcSize'), '$150.00');
-  assert.equal((element('tableBody').innerHTML.match(/class="activity-leaf"/g) ?? []).length, 2);
-  assert.match(element('activityTotals').innerHTML, /grid-group-count">150</);
+  const footer = element('activityTotals').innerHTML;
+  assert.equal(numberInCell(footer, 'usdcSize'), '$150.00');
+  assert.match(footer, /grid-total-count">150</);
+  assert.equal((footer.match(/<tr /g) ?? []).length, 1);
+  assert.match(footer, /class="grid-total-row"/);
 });
 
-test('position footer and grouped aggregates include rows beyond the 1000-row render cap', () => {
+test('position total includes rows beyond the 1000-row render cap', () => {
   const rows = Array.from({length: 1205}, (_, index) => ({
     proxyWallet: WALLET, asset: String(index), outcome: 'Yes', cashPnl: -1,
     currentValue: 2, fee: 0, title: 'Position ' + index
   }));
-  const {context, element} = harness({view: 'positions', rows, cap: 1000, groups: ['0']});
+  const {context, element} = harness({view: 'positions', rows, cap: 1000});
   context.refreshValues();
-  assert.equal(numberInCell(element('positionTotals').innerHTML, 'cashPnl'), '-$1,205.00');
-  assert.equal(numberInCell(element('posBody').innerHTML, 'cashPnl'), '-$1,205.00');
-  assert.equal((element('posBody').innerHTML.match(/class="pos-row"/g) ?? []).length, 1000);
+  const footer = element('positionTotals').innerHTML;
+  assert.equal(numberInCell(footer, 'cashPnl'), '-$1,205.00');
+  assert.match(footer, /grid-total-count">1,205</);
+  assert.equal((footer.match(/<tr /g) ?? []).length, 1);
 });
 
-test('wallet grouping is case-insensitive while outcome groups remain distinct', () => {
-  const rows = [
-    {proxyWallet: WALLET, outcome: 'Yes'},
-    {proxyWallet: WALLET.toUpperCase(), outcome: 'No'},
-    {proxyWallet: OTHER_WALLET, outcome: 'Yes'}
-  ];
-  const {context} = harness({view: 'positions', rows});
-  const tree = ValuesGroups.build(rows, ['0', '2'], (row, field) => context.gridGroupValue('positions', row, field));
-  assert.equal(tree.length, 2);
-  assert.deepEqual(tree[0].children.map(node => node.label), ['Yes', 'No']);
-  assert.equal(tree[0].rows.length, 2);
-  assert.notEqual(tree[0].children[0].key, tree[1].children[0].key);
-  assert.deepEqual(JSON.parse(tree[0].children[1].key), [['0', WALLET], ['2', 'No']]);
+for (const view of ['activity', 'positions']) {
+  test(`${view} ignores obsolete grouping preferences and preserves flat rows on refresh`, () => {
+    const row = {type: 'TRADE', proxyWallet: WALLET, usdcSize: 12, cashPnl: 3, fee: 0};
+    const {context, element} = harness({view, rows: [row], obsoleteGroups: ['0', '2']});
+    const otherFooter = element(view === 'positions' ? 'activityTotals' : 'positionTotals');
+    otherFooter.innerHTML = 'Previous view total';
+    context.refreshValues();
+    row.usdcSize = 20;
+    row.cashPnl = 5;
+    context.refreshValues();
+    const footer = element(view === 'positions' ? 'positionTotals' : 'activityTotals');
+    assert.equal(numberInCell(footer.innerHTML, view === 'positions' ? 'cashPnl' : 'usdcSize'),
+      view === 'positions' ? '$5.00' : '$20.00');
+    assert.doesNotMatch(footer.innerHTML, /grid-group|aria-expanded/);
+    assert.equal(element('activityValues').hidden, view !== 'activity');
+    assert.equal(element('positionValues').hidden, view !== 'positions');
+    assert.equal(otherFooter.innerHTML, 'Previous view total');
+    assert.equal(footer.hidden, false);
+  });
+}
+
+test('an empty values selection clears and hides only its active footer', () => {
+  const {context, element} = harness({config: []});
+  element('activityTotals').innerHTML = 'Previous total';
+  element('positionTotals').innerHTML = 'Other total';
+  context.refreshValues();
+  assert.equal(element('activityTotals').hidden, true);
+  assert.equal(element('activityTotals').innerHTML, '');
+  assert.equal(element('positionTotals').innerHTML, 'Other total');
 });
 
 test('aggregates preserve unknown data and explain partial fee coverage', () => {
@@ -178,56 +190,15 @@ test('redeemed Value uses payout and PnL is not reduced by estimated fees', () =
   assert.match(context.gridAggregateCell('positions', rows, 'cashPnl', 'sum', samples).html, /grid-number pos">\$20\.00/);
 });
 
-test('collapsing a group hides its leaves without altering the group subtotal or footer', () => {
-  const rows = [
-    {type: 'TRADE', proxyWallet: WALLET, usdcSize: 10, fee: 0},
-    {type: 'TRADE', proxyWallet: WALLET, usdcSize: 5, fee: 0},
-    {type: 'TRADE', proxyWallet: OTHER_WALLET, usdcSize: 2, fee: 0}
-  ];
-  const {context, element} = harness({rows, groups: ['1']});
+test('a truly empty completed search has a zero sum and count but no average', () => {
+  const {context, element} = harness();
   context.refreshValues();
   const footer = element('activityTotals').innerHTML;
-  const key = JSON.stringify([['1', WALLET]]);
-  context.gridState.activity.collapsed.add(key);
-  context.refreshValues();
-  assert.equal((element('tableBody').innerHTML.match(/class="activity-leaf"/g) ?? []).length, 1);
-  assert.match(element('tableBody').innerHTML, /aria-expanded="false"/);
-  assert.equal(numberInCell(element('tableBody').innerHTML, 'usdcSize'), '$15.00');
-  assert.equal(element('activityTotals').innerHTML, footer);
-  context.gridState.activity.collapsed.delete(key);
-  context.refreshValues();
-  assert.equal((element('tableBody').innerHTML.match(/class="activity-leaf"/g) ?? []).length, 3);
-});
-
-test('grouped history rows survive fresh objects from the production position view', () => {
-  const latest = {type: 'TRADE', proxyWallet: WALLET, asset: 'history-token',
-    conditionId: 'history-market', outcome: 'Yes', title: 'Historical trade'};
-  const activityGroup = {latest, trades: [latest]};
-  const {context, element} = harness({view: 'positions', groups: ['0']});
-  context.positionActivityGroups = () => new Map([['history', activityGroup]]);
-  context.visiblePositions = () => context.positionViewRows();
-  context.posRendered = context.visiblePositions();
-  assert.equal(context.posRendered[0].isActivityOnly, true);
-  assert.notEqual(context.visiblePositions()[0], context.posRendered[0]);
-  context.refreshValues();
-  assert.match(element('posBody').innerHTML, /class="grid-group-row"/);
-  assert.match(element('posBody').innerHTML, /class="pos-row"/);
-  assert.match(element('posBody').innerHTML, /Historical trade/);
-});
-
-test('history identities distinguish both outcomes of the same market without token IDs', () => {
-  const latest = outcome => ({type: 'TRADE', proxyWallet: WALLET, conditionId: 'shared-market',
-    outcome, title: outcome + ' history'});
-  const yes = latest('Yes'), no = latest('No');
-  const groups = new Map([
-    ['yes', {latest: yes, trades: [yes]}],
-    ['no', {latest: no, trades: [no]}]
-  ]);
-  const {context, element} = harness({view: 'positions', groups: ['0', '2']});
-  context.positionActivityGroups = () => groups;
-  context.visiblePositions = () => context.positionViewRows();
-  context.posRendered = context.visiblePositions();
-  context.refreshValues();
-  assert.match(element('posBody').innerHTML, /data-pi="0"><td>Yes history/);
-  assert.match(element('posBody').innerHTML, /data-pi="1"><td>No history/);
+  assert.equal(numberInCell(footer, 'usdcSize'), '$0.00');
+  assert.match(footer, /grid-total-count">0</);
+  assert.doesNotMatch(footer, /grid-partial/);
+  const count = context.gridAggregateCell('activity', [], 'usdcSize', 'count', new Map());
+  assert.match(count.html, /grid-number">0</);
+  const average = context.gridAggregateCell('activity', [], 'usdcSize', 'avg', new Map());
+  assert.match(average.html, /grid-number">—</);
 });
