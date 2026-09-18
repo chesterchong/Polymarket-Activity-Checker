@@ -76,7 +76,6 @@ h1{font-size:16px; font-weight:600; letter-spacing:-.01em;}
 .icon-btn:focus-visible{outline:2px solid var(--primary); outline-offset:2px;}
 .icon-btn svg{width:15px; height:15px;}
 #timezoneBtn{width:auto; min-width:88px; gap:6px; padding:0 10px; font-family:inherit; font-size:11px; font-weight:500; white-space:nowrap;}
-#timezoneBtn:disabled{opacity:.45; cursor:wait; background:var(--card);}
 #saveAddressesBtn.on{color:var(--primary); border-color:var(--primary);}
 #saveAddressesBtn.on svg{fill:currentColor;}
 .bookmark-control{position:relative; display:inline-flex;}
@@ -3370,10 +3369,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     buildColsList();
   }
   $("timezoneBtn").addEventListener("click", ()=>{
-    const button = $("timezoneBtn");
-    if(button.disabled) return;
-    button.disabled = true;
-    setTimeout(() => { button.disabled = false; }, 1000);
     tzSel = tzSel === "GMT+8" ? "ET" : "GMT+8";
     try{ localStorage.setItem(TZ_KEY, tzSel); }catch(e){}
     applyTz();

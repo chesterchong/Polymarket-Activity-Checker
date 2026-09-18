@@ -12,9 +12,7 @@ assert.ok(clockSource, 'Production digital clock function must be present');
 assert.ok(toggleSource.includes('timezoneBtn'), 'Production timezone button handler must be present');
 
 function harness({ savedZone, blockedStorage = false } = {}) {
-  let now = Date.parse('2026-09-18T12:34:56Z');
-  let nextTimer = 0;
-  const timers = new Map();
+  const now = Date.parse('2026-09-18T12:34:56Z');
   const elements = new Map();
   const saved = new Map(savedZone ? [['pmac_tz', savedZone]] : []);
   const calls = { persistence: [], picker: [], refresh: 0, positions: 0 };
@@ -44,8 +42,6 @@ function harness({ savedZone, blockedStorage = false } = {}) {
         calls.persistence.push([key, value]);
       }
     },
-    setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, at: now + delay }); return id; },
-    clearTimeout(id) { timers.delete(id); },
     window: { DateRangePicker: { setTimezone(zone) { calls.picker.push(zone); } } },
     actCols: { colNames: Array(11).fill('') },
     posCols: { colNames: Array(12).fill('') },
@@ -59,19 +55,7 @@ function harness({ savedZone, blockedStorage = false } = {}) {
   vm.runInContext(timezoneSource + '\n' + clockSource + '\n' + toggleSource, context);
   vm.runInContext('applyTz()', context);
   function click() { element('timezoneBtn').listeners.get('click')(); }
-  function advance(ms) {
-    const end = now + ms;
-    for (;;) {
-      const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
-      if (!next) break;
-      const [id, timer] = next;
-      now = timer.at;
-      timers.delete(id);
-      timer.callback();
-    }
-    now = end;
-  }
-  return { context, element, calls, saved, click, advance, timers, zone: () => vm.runInContext('tzSel', context) };
+  return { context, element, calls, saved, click, zone: () => vm.runInContext('tzSel', context) };
 }
 
 function assertLabels(h, zone, time) {
@@ -100,32 +84,18 @@ test('timezone toggle updates clock, headers, picker, and saved preference toget
   assert.equal(h.context.posRenderKey, null);
 });
 
-test('repeated activation is ignored until the one-second cooldown ends', () => {
+test('every repeated activation switches immediately without disabling the button', () => {
   const h = harness();
-  h.click();
-  assert.equal(h.element('timezoneBtn').disabled, true);
-  // Exercise the guard directly as well as the native disabled state.
-  h.click();
-  h.click();
-  assert.equal(h.zone(), 'ET');
-  assert.equal(h.calls.refresh, 1);
-  assert.equal(h.calls.persistence.length, 1);
-  assert.equal(h.timers.size, 1);
-  h.advance(999);
-  assert.equal(h.element('timezoneBtn').disabled, true);
-  h.click();
-  assert.equal(h.calls.refresh, 1);
-  h.advance(1);
-  assert.equal(h.element('timezoneBtn').disabled, false);
-  h.click();
-  assert.equal(h.zone(), 'GMT+8');
-  assertLabels(h, 'GMT+8', '20:34:57');
-  assert.equal(h.calls.refresh, 2);
-  assert.equal(h.calls.positions, 2);
-  assert.equal(h.calls.persistence.length, 2);
-  assert.equal(h.element('timezoneBtn').disabled, true);
-  h.advance(1000);
-  assert.equal(h.element('timezoneBtn').disabled, false);
+  for (const zone of ['ET', 'GMT+8', 'ET', 'GMT+8']) {
+    h.click();
+    assert.equal(h.zone(), zone);
+    assert.equal(h.element('timezoneBtn').disabled, false);
+    assertLabels(h, zone, zone === 'ET' ? '08:34:56' : '20:34:56');
+    assert.equal(h.saved.get('pmac_tz'), zone);
+  }
+  assert.equal(h.calls.refresh, 4);
+  assert.equal(h.calls.positions, 4);
+  assert.equal(h.calls.persistence.length, 4);
 });
 
 test('a saved Eastern timezone is labelled correctly before the first toggle', () => {
@@ -136,13 +106,11 @@ test('a saved Eastern timezone is labelled correctly before the first toggle', (
   assert.equal(h.saved.get('pmac_tz'), 'GMT+8');
 });
 
-test('blocked browser storage does not prevent switching or release of the cooldown', () => {
+test('blocked browser storage does not prevent immediate switching', () => {
   const h = harness({ blockedStorage: true });
   assert.doesNotThrow(h.click);
   assertLabels(h, 'ET', '08:34:56');
-  assert.equal(h.element('timezoneBtn').disabled, true);
-  h.advance(1000);
   assert.equal(h.element('timezoneBtn').disabled, false);
   assert.doesNotThrow(h.click);
-  assertLabels(h, 'GMT+8', '20:34:57');
+  assertLabels(h, 'GMT+8', '20:34:56');
 });
