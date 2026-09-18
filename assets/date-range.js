@@ -65,7 +65,6 @@
   document.body.appendChild(dialog);
   const months = dialog.querySelector(".dr-months"), apply = dialog.querySelector(".dr-apply");
   const status = dialog.querySelector(".dr-status");
-  const mobile = root.matchMedia("(max-width:640px)");
   let timezone = "GMT+8", draft = {start:"", end:""}, firstMonth = "", focusDay = "", hoverDay = "";
   const format = (value, options)=>new Intl.DateTimeFormat("en-US", {timeZone:"UTC", ...options}).format(parseDate(value));
   const shortDate = value=>format(value, {month:"short", day:"numeric", year:"numeric"});
@@ -95,9 +94,8 @@
     dialog.style.top = top + "px";
   }
   function ensureVisible(date){
-    const lastMonth = mobile.matches ? firstMonth : shiftMonth(firstMonth, 1);
     const key = monthStart(date);
-    if(key < firstMonth || key > lastMonth) firstMonth = key;
+    if(key !== firstMonth) firstMonth = key;
   }
   function paintRange(){
     const choosingEnd = !!draft.start && !draft.end;
@@ -129,18 +127,18 @@
     const weekdayShort = ["M","T","W","T","F","S","S"];
     let markup = '<button type="button" class="dr-nav dr-prev" aria-label="Previous month">' + icon('m14 6-6 6 6 6') + '</button>'
       + '<button type="button" class="dr-nav dr-next" aria-label="Next month">' + icon('m10 6 6 6-6 6') + '</button>';
-    for(let index = 0; index < (mobile.matches ? 1 : 2); index++){
-      const month = shiftMonth(firstMonth, index), heading = format(month, {month:"long", year:"numeric"});
-      markup += '<section class="dr-month"><h3 class="dr-month-title" id="dateMonth' + index + '">' + heading + '</h3><table class="dr-calendar" role="grid" aria-labelledby="dateMonth' + index + '"><thead><tr>'
-        + weekdayLabels.map((day,i)=>'<th scope="col" aria-label="' + day + '">' + weekdayShort[i] + '</th>').join("") + '</tr></thead><tbody>';
-      const days = calendarDays(month);
-      for(let week = 0; week < 6; week++){
-        markup += '<tr>' + days.slice(week * 7, week * 7 + 7).map(date=>date
-          ? '<td role="gridcell" aria-selected="false"><button type="button" class="dr-day' + (date === today ? ' is-today' : '') + '" data-date="' + date + '" tabindex="' + (date === focusDay ? '0' : '-1') + '"' + (date === today ? ' aria-current="date"' : '') + '>' + Number(date.slice(-2)) + '</button></td>'
-          : '<td role="gridcell"></td>').join("") + '</tr>';
-      }
-      markup += '</tbody></table></section>';
+    const heading = format(firstMonth, {month:"long", year:"numeric"});
+    markup += '<section class="dr-month"><h3 class="dr-month-title" id="dateMonth">' + heading + '</h3><table class="dr-calendar" role="grid" aria-labelledby="dateMonth"><thead><tr>'
+      + weekdayLabels.map((day,i)=>'<th scope="col" aria-label="' + day + '">' + weekdayShort[i] + '</th>').join("") + '</tr></thead><tbody>';
+    const days = calendarDays(firstMonth);
+    for(let week = 0; week < 6; week++){
+      const weekDays = days.slice(week * 7, week * 7 + 7);
+      if(!weekDays.some(Boolean)) break;
+      markup += '<tr>' + weekDays.map(date=>date
+        ? '<td role="gridcell" aria-selected="false"><button type="button" class="dr-day' + (date === today ? ' is-today' : '') + '" data-date="' + date + '" tabindex="' + (date === focusDay ? '0' : '-1') + '"' + (date === today ? ' aria-current="date"' : '') + '>' + Number(date.slice(-2)) + '</button></td>'
+        : '<td role="gridcell"></td>').join("") + '</tr>';
     }
+    markup += '</tbody></table></section>';
     months.innerHTML = markup;
     paintRange();
     position();
