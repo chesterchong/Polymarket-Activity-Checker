@@ -46,7 +46,7 @@ The window determines which positions appear and which trades contribute fees. P
 - Open **Date range**, select the start and end dates in one calendar, then **Apply**. **Clear** removes the range when applied; Escape cancels unfinished changes.
 - Click **Snapshot** to copy the visible results table as an image. If image clipboard access is unavailable, the app downloads a PNG instead.
 - Use the theme button to switch between light and dark mode.
-- A frosted winter street wallpaper sits behind the glass panels, with gentle snowfall and passing lights. Motion pauses in hidden tabs and respects your device's reduced-motion setting.
+- A frosted winter street wallpaper sits behind the glass panels, with gentle snowfall, moving cars, refracted lights and wet-road reflections. Motion pauses in hidden tabs and respects your device's reduced-motion setting.
 - Use **Clear** beside **Check activity** to empty the address field. Saved bookmarks and current results stay available.
 - Use **Reset filters** to clear result filters, or **Check activity** again to reload data.
 
