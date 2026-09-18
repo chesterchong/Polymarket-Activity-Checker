@@ -75,6 +75,7 @@ h1{font-size:16px; font-weight:600; letter-spacing:-.01em;}
 .icon-btn:hover{background:var(--muted);}
 .icon-btn:focus-visible{outline:2px solid var(--primary); outline-offset:2px;}
 .icon-btn svg{width:15px; height:15px;}
+#timezoneBtn:disabled{opacity:.45; cursor:wait; background:var(--card);}
 #saveAddressesBtn.on{color:var(--primary); border-color:var(--primary);}
 #saveAddressesBtn.on svg{fill:currentColor;}
 .bookmark-control{position:relative; display:inline-flex;}
@@ -174,6 +175,11 @@ input[type="search"]{
   font-family:inherit; font-size:13px; padding:0 14px 0 33px; width:220px;
 }
 input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-offset:1px;}
+#searchBox{padding-right:36px;}
+.search-mode-btn{position:absolute; right:5px; top:50%; transform:translateY(-50%); display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--muted-foreground); font-family:'Geist Mono',ui-monospace,monospace; font-size:15px; font-weight:500; cursor:pointer;}
+.search-mode-btn:hover{background:var(--muted); color:var(--foreground);}
+.search-mode-btn[aria-pressed="true"]{background:var(--primary); color:var(--primary-foreground);}
+.search-mode-btn:focus-visible{outline:2px solid var(--primary); outline-offset:2px;}
 
 /* table */
 /* results area: table on the left, collapsible filter sidebar on the right.
@@ -188,14 +194,11 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .side-panel{width:0; overflow:clip; border:1px solid var(--border); border-right:none; background:var(--card); transition:width .15s ease;}
 .side-bar.open .side-panel{width:220px;}
 .sp-inner{position:sticky; top:8px; width:220px; box-sizing:border-box; padding:14px; display:flex; flex-direction:column; gap:8px;}
-.sp-inner[hidden]{display:none;}
+/* Reserve the sidebar's full height when collapsed, without exposing its controls. */
+.sp-inner[hidden]{display:flex; visibility:hidden; pointer-events:none;}
 .sp-inner{max-height:calc(100vh - 16px); overflow-y:auto; overscroll-behavior:contain;}
 .sp-title{font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted-foreground);}
 .sp-reset{margin-top:8px; align-self:flex-start; font-size:12px; height:28px; padding:0 10px; border-radius:999px;}
-/* time-zone picker lives in the same panel, under its own heading */
-.sp-tz-title{margin-top:14px; padding-top:12px; border-top:1px solid var(--border);}
-.sp-tz{display:flex;}
-.sp-tz .seg-btn{flex:1; height:28px; font-size:12px; padding:0;}
 .side-tabs{border:1px solid var(--border); background:var(--card); flex:0 0 auto;}
 .side-tab{
   position:sticky; top:8px; writing-mode:vertical-rl;
@@ -486,7 +489,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 <link rel="stylesheet" href="assets/winter.css">
 <link rel="preload" as="image" href="assets/winter-window.jpg">
 <script defer src="assets/winter.js"></script>
-<link rel="stylesheet" href="assets/date-range.css">
+<link rel="stylesheet" href="assets/date-range.css?v=2">
 <link rel="stylesheet" href="assets/values-panel.css">
 <link rel="stylesheet" href="assets/grid-values.css">
 </head>
@@ -511,6 +514,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       </button>
       <span class="bookmark-feedback" id="bookmarkFeedback" role="status" aria-live="polite"></span>
       </span>
+      <button type="button" class="icon-btn" id="timezoneBtn" title="Time zone: GMT+8. Switch to ET" aria-label="Time zone: GMT+8. Switch to ET">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18z"/></svg>
+      </button>
       <button type="button" class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
         <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         <svg id="iconSun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
@@ -636,6 +642,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <span class="search-wrap">
             <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
             <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
+            <button type="button" id="searchModeBtn" class="search-mode-btn" aria-label="Search transaction IDs only" aria-pressed="false" title="Search transaction IDs only">#</button>
           </span>
         </span>
         <span class="refresh-status">
@@ -699,11 +706,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           <button type="button" class="btn btn-ghost sp-reset" id="colsReset" title="Restore this view's default column order and visibility">Reset columns</button>
           <div id="activityValues"></div>
           <div id="positionValues" hidden></div>
-          <div class="sp-title sp-tz-title">Time zone</div>
-          <div class="seg sp-tz" id="tzSeg" role="group" aria-label="Time zone" title="Time zone for the Time column and the date filter">
-            <button type="button" class="seg-btn" data-tz="ET" title="US Eastern time">ET</button>
-            <button type="button" class="seg-btn" data-tz="GMT+8" title="Singapore / Malaysia time">GMT+8</button>
-          </div>
         </div>
       </div>
       <div class="side-tabs">
@@ -719,7 +721,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
 <div id="tooltip" role="tooltip"></div>
 
-<script src="assets/date-range.js"></script>
+<script src="assets/date-range.js?v=2"></script>
 <script src="assets/values-math.js"></script>
 <script src="assets/values-data.js"></script>
 <script src="assets/values-groups.js"></script>
@@ -747,6 +749,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // ---------- state ----------
   let allRecords = [];
   let filteredRecords = [];
+  let searchByTx = false;
   let renderedCount = 0;
   let pagesFetched = 0;
   let fetching = false;
@@ -1585,6 +1588,16 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return t == null || isNaN(t) ? null : Math.floor(t/1000);
   }
 
+  function transactionMatches(record, query){
+    return typeof record.transactionHash === "string" && record.transactionHash.toLowerCase().includes(query);
+  }
+  function updateSearchMode(){
+    const button = $("searchModeBtn"), input = $("searchBox");
+    button.setAttribute("aria-pressed", String(searchByTx));
+    button.title = searchByTx ? "Search markets" : "Search transaction IDs only";
+    input.placeholder = searchByTx ? "Filter TxIDs…" : "Filter markets…";
+    input.setAttribute("aria-label", searchByTx ? "Filter transaction IDs" : "Filter results");
+  }
   function applySearch(){
     const q = $("searchBox").value.trim().toLowerCase();
     const from = dateBound("dateFrom", false), to = dateBound("dateTo", true);
@@ -1607,6 +1620,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       if(from != null && ts < from) return false;
       if(to != null && ts > to) return false;
       if(!q) return true;
+      if(searchByTx) return transactionMatches(r, q);
       return (r.title||"").toLowerCase().includes(q) ||
              (r.slug||"").toLowerCase().includes(q) ||
              (r.outcome||"").toLowerCase().includes(q) ||
@@ -2258,10 +2272,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // basePositions is the set BEFORE status filtering — the chip counts read it.
   function searchPositions(){
     const q = $("searchBox").value.trim().toLowerCase();
-    return positionViewRows().filter(p => !q
-      || (p.title||"").toLowerCase().includes(q)
-      || (p.outcome||"").toLowerCase().includes(q)
-      || (p.slug||"").toLowerCase().includes(q));
+    return positionViewRows().filter(p => {
+      if(!q) return true;
+      if(searchByTx) return (positionGroupFor(p)?.records || []).some(r => transactionMatches(r, q));
+      return (p.title||"").toLowerCase().includes(q)
+        || (p.outcome||"").toLowerCase().includes(q)
+        || (p.slug||"").toLowerCase().includes(q);
+    });
   }
   function basePositions(){
     let rows = searchPositions();
@@ -2352,7 +2369,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const q = $("searchBox").value.trim();
     // progressive feed chunks re-dispatch here constantly — skip identical re-renders
     const key = [posRunSeq, posLoading, posLoaded, posError, allPositions.length, allRecords.length,
-      lastParams.start, lastParams.end, $("dateFrom").value, $("dateTo").value, q.toLowerCase(),
+      lastParams.start, lastParams.end, $("dateFrom").value, $("dateTo").value, q.toLowerCase(), searchByTx,
       [...catFilter].sort().join(","), [...posStatusFilter].sort().join(",")].join("|");
     if(key === posRenderKey) return;
     posRenderKey = key;
@@ -3284,6 +3301,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
 
   let searchTimer;
+  $("searchModeBtn").addEventListener("click", ()=>{
+    clearTimeout(searchTimer);
+    searchByTx = !searchByTx;
+    updateSearchMode();
+    posRenderKey = null;
+    refreshResults();
+    renderPositions();
+  });
   $("searchBox").addEventListener("input", ()=>{
     clearTimeout(searchTimer);
     searchTimer = setTimeout(()=>{ refreshResults(); renderPositions(); }, 200);
@@ -3331,22 +3356,28 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function applyTz(){
     updateDigitalClock();
     window.DateRangePicker?.setTimezone(tzSel);
-    document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.tz === tzSel));
+    const timezoneButton = $("timezoneBtn");
+    const timezoneLabel = "Time zone: " + tzSel + ". Switch to " + (tzSel === "GMT+8" ? "ET" : "GMT+8");
+    timezoneButton.title = timezoneLabel;
+    timezoneButton.setAttribute("aria-label", timezoneLabel);
     $("thTime").innerHTML = "Time (" + esc(tzSel) + ') <span id="sortArrow">' + (sortDir === "desc" ? "▼" : "▲") + "</span>";
     actCols.colNames[0] = "Time (" + tzSel + ")";
     $("marketTimeLabel").textContent = "Market time (" + tzSel + ")";
     posCols.colNames[11] = "Market time (" + tzSel + ")";
     buildColsList();
   }
-  document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.addEventListener("click", ()=>{
-    if(b.dataset.tz === tzSel) return;
-    tzSel = b.dataset.tz;
+  $("timezoneBtn").addEventListener("click", ()=>{
+    const button = $("timezoneBtn");
+    if(button.disabled) return;
+    button.disabled = true;
+    setTimeout(() => { button.disabled = false; }, 1000);
+    tzSel = tzSel === "GMT+8" ? "ET" : "GMT+8";
     try{ localStorage.setItem(TZ_KEY, tzSel); }catch(e){}
     applyTz();
     refreshResults();
     posRenderKey = null;
     renderPositions();
-  }));
+  });
   $("rowsSel").addEventListener("change", ()=>{
     pageSize = Number($("rowsSel").value) || 100;
     if(allRecords.length && $("tabTable").classList.contains("on")) renderTableChunk(true);
@@ -3967,6 +3998,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("dateFrom").value = ""; $("dateTo").value = "";
     window.DateRangePicker?.sync();
     $("searchBox").value = "";
+    searchByTx = false;
+    updateSearchMode();
     if(!opts || !opts.keepRows){ $("rowsSel").value = "100"; pageSize = 100; }
     marketFilter = null; renderChips();
     catFilter = new Set();

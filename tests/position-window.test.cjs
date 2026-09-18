@@ -46,6 +46,7 @@ function harness(options = {}) {
     currentWallets: options.wallets || [WALLET_A],
     lastParams: options.params || {},
     positionGroupCache: null,
+    searchByTx: false,
     positionMarketTimeValue: () => '',
     positionMarketTimes: () => [],
     cacheMarketTime() {}, refreshMarketTimeCells() {}, loadMarketTimesFor() {},
@@ -70,7 +71,7 @@ function harness(options = {}) {
       return elements.get(id);
     },
   });
-  const names = ['zonedMidnight', 'zonedDayBound', 'dateBound', 'positionGroupKey', 'positionOutcomeKey', 'positionActivityGroups', 'positionGroupFor', 'positionTradesFor', 'positionViewRows', 'searchPositions', 'basePositions', 'visiblePositions', 'sortPositionsByMarketTime', 'posStatus', 'positionStatusGroup', 'matchesPositionStatus', 'fetchWithRetry', 'fetchClosedPositions', 'mapClosedPosition', 'computeFeeFor', 'feeUnavailable', 'positionFeeEstimate', 'positionFeeText', 'positionsCsv'];
+  const names = ['zonedMidnight', 'zonedDayBound', 'dateBound', 'transactionMatches', 'positionGroupKey', 'positionOutcomeKey', 'positionActivityGroups', 'positionGroupFor', 'positionTradesFor', 'positionViewRows', 'searchPositions', 'basePositions', 'visiblePositions', 'sortPositionsByMarketTime', 'posStatus', 'positionStatusGroup', 'matchesPositionStatus', 'fetchWithRetry', 'fetchClosedPositions', 'mapClosedPosition', 'computeFeeFor', 'feeUnavailable', 'positionFeeEstimate', 'positionFeeText', 'positionsCsv'];
   const constants = [html.match(/^  const fmtUsd = .+$/m)[0], html.match(/^  const csvCell = [^]*?^  };/m)[0]];
   vm.runInContext(constants.concat(names.map(productionFunction)).join('\n'), context, {filename: 'index.html extracted position window functions'});
   return {context, elements, calls};

@@ -61,7 +61,7 @@
     + '<div class="dr-selection"><div class="dr-selection-box" data-endpoint="start"><span class="dr-selection-caption">Start date</span><span class="dr-selection-value"></span></div>'
     + '<svg class="dr-selection-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>'
     + '<div class="dr-selection-box" data-endpoint="end"><span class="dr-selection-caption">End date</span><span class="dr-selection-value"></span></div></div>'
-    + '<div class="dr-months"></div><div class="dr-footer"><button type="button" class="dr-clear">Clear</button><span class="dr-status" id="dateRangeStatus" aria-live="polite"></span><button type="button" class="dr-apply">Apply</button></div>';
+    + '<div class="dr-months"></div><div class="dr-footer"><button type="button" class="dr-clear">Clear</button><button type="button" class="dr-today">Today</button><span class="dr-status" id="dateRangeStatus" aria-live="polite"></span><button type="button" class="dr-apply">Apply</button></div>';
   document.body.appendChild(dialog);
   const months = dialog.querySelector(".dr-months"), apply = dialog.querySelector(".dr-apply");
   const status = dialog.querySelector(".dr-status");
@@ -169,6 +169,15 @@
     hoverDay = "";
     paintRange();
   });
+  function selectToday(){
+    const today = todayInZone(timezone);
+    draft = {start:today, end:today};
+    firstMonth = monthStart(today);
+    focusDay = today;
+    hoverDay = "";
+    renderMonths();
+  }
+  dialog.querySelector(".dr-today").addEventListener("click", selectToday);
   apply.addEventListener("click", ()=>{
     if(apply.disabled) return;
     const changed = from.value !== draft.start || to.value !== draft.end;
