@@ -259,16 +259,8 @@ td.neg{color:var(--destructive);}
 @keyframes positionLoss{0%{background:rgba(239,68,68,.22);}100%{background:transparent;}}
 tr.pos-row.price-profit{animation:positionProfit .9s ease-out;}
 tr.pos-row.price-loss{animation:positionLoss .9s ease-out;}
-/* breathing "live" indicator */
-.live-pill{display:inline-flex; align-items:center; gap:5px; margin-left:8px; color:var(--success); font-weight:500;}
-.live-dot{width:7px; height:7px; border-radius:50%; background:var(--success); animation:liveBreathe 1.8s ease-in-out infinite;}
-@keyframes liveBreathe{
-  0%, 100%{opacity:.35; box-shadow:0 0 0 0 rgba(34,197,94,0);}
-  50%{opacity:1; box-shadow:0 0 7px 1px rgba(34,197,94,.5);}
-}
 @media (prefers-reduced-motion: reduce){
   .px-up, .px-down,tr.pos-row.price-profit,tr.pos-row.price-loss{animation:none;}
-  .live-dot{animation:none; opacity:1;}
 }
 .table-wrap.grabbable{cursor:grab;} /* interactive cells (headers, badges, links) override with their own cursor */
 .table-wrap.grab-panning{cursor:grabbing; user-select:none;}
@@ -2311,38 +2303,27 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("posWrap").classList.toggle("grabbable", $("posWrap").scrollWidth > $("posWrap").clientWidth);
   }
   function buildPosNote(rows, q){
-    let note;
+    let note = "";
     if(posLoading) note = "Loading positions…";
     else if(posError) note = "Could not load positions — " + posError + ". Run the search again to retry.";
     else if(!posLoaded) note = currentWallets.length ? "" : "Check a wallet first — positions load from the current search.";
     else if(!rows.length) note = fetching ? "Loading activity for the selected window…"
       : "No positions match the selected time window and filters.";
     else{
-      const val = rows.reduce((s,p)=>s+(Number(p.currentValue)||0),0);
-      const pnl = rows.reduce((s,p)=>s+(Number(p.cashPnl)||0),0);
-      const redeem = rows.filter(p=>posStatus(p) === "notredeemed").length;
-      const paid = rows.reduce((s,p)=>s+(Number(p.payout)||0),0);
       const unavailable = rows.filter(p => p.isActivityOnly).length;
-      note = rows.length.toLocaleString() + " position" + (rows.length===1?"":"s")
-        + (Number(lastParams.start) > 1 ? " in search window" : " across all time")
-        + " · " + (unavailable ? "known " : "current ") + "value $" + fmtUsd(val)
-        + " · " + (unavailable ? "known " : "") + "PnL " + (pnl < 0 ? "-$" : "$") + fmtUsd(Math.abs(pnl))
-        + (paid ? " · redeemed $" + fmtUsd(paid) : "")
-        + (redeem ? " · " + redeem.toLocaleString() + " not redeemed" : "")
-        + (unavailable ? " · " + unavailable + " position snapshots unavailable (History)" : "");
-      if(posTruncated) note += " · limited to the first " + (POS_MAX_PAGES*500).toLocaleString() + " positions per wallet";
-      if(rows.length > POS_VIEW_CAP) note += " · showing the top " + POS_VIEW_CAP.toLocaleString() + " by value — narrow the search or download the CSV for all";
+      if(unavailable) note = unavailable + " position snapshots unavailable (History)";
+      if(posTruncated) note += (note ? " · " : "") + "Limited to the first " + (POS_MAX_PAGES*500).toLocaleString() + " positions per wallet";
+      if(rows.length > POS_VIEW_CAP) note += (note ? " · " : "") + "Showing the top " + POS_VIEW_CAP.toLocaleString() + " by value — narrow the search or download the CSV for all";
     }
     if(posLoaded && posFailedWallets.length)
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
     if(livePositionError) note += (note ? " · " : "") + livePositionError;
     if(livePriceError) note += (note ? " · " : "") + livePriceError;
-    if(feedTruncated) note += " · activity history is incomplete; some positions or fees may be missing";
+    if(feedTruncated) note += (note ? " · " : "") + "Activity history is incomplete; some positions or fees may be missing";
     return note;
   }
   function setPosNote(note){
-    $("posNote").innerHTML = esc(note)
-      + (liveActive ? '<span class="live-pill"><span class="live-dot"></span>live</span>' : "");
+    $("posNote").textContent = note;
   }
 
   // ---------- live single holdings (3s) and independent market prices (1s) ----------
