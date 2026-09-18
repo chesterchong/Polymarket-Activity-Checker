@@ -377,7 +377,6 @@ tbody tr.pos-detail:hover{background:transparent;}
 .ta-wrap{position:relative;}
 #addrInput{word-break:break-all; transition:background-color .16s ease;}
 #addrInput:focus{background-color:var(--input-focus-bg,var(--muted));}
-.address-note{padding:0 12px 10px; font-size:12px; color:var(--muted-foreground);}
 
 /* segmented control — pill-shaped */
 .seg{display:inline-flex; border:1px solid var(--border); background:var(--card); border-radius:999px; overflow:hidden;}
@@ -505,9 +504,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
     <div class="card">
       <div class="ta-wrap">
-        <textarea id="addrInput" placeholder="0x..." spellcheck="false" autocomplete="off" aria-label="Wallet addresses" aria-describedby="addressNote"></textarea>
+        <textarea id="addrInput" placeholder="0x..." spellcheck="false" autocomplete="off" aria-label="Wallet addresses"></textarea>
       </div>
-      <div class="address-note" id="addressNote" role="status" hidden></div>
       <div class="toolbar">
         <div class="toolbar-left">
           <div class="seg" id="timeSeg" role="group" aria-label="Time range">
@@ -848,8 +846,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("bookmarkFeedback").textContent = success ? "Saved" : "";
     bookmarkFeedbackTimer = setTimeout(clearBookmarkFeedback, 2000);
   }
-  function renderSavedAddresses(message = ""){
-    const input = $("addrInput"), button = $("saveAddressesBtn"), note = $("addressNote");
+  function renderSavedAddresses(){
+    const input = $("addrInput"), button = $("saveAddressesBtn");
     const saved = currentAddressesAreSaved();
     const label = savedAddressText && !saved ? "Overwrite saved addresses in this browser" : "Save addresses in this browser";
     button.classList.toggle("on", saved);
@@ -858,8 +856,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     input.placeholder = savedAddressText || "0x...";
     input.title = savedAddressText && !input.value ? "Press Tab or double-click to fill saved addresses" : "";
     $("clearAddressesBtn").disabled = !input.value;
-    note.textContent = message;
-    note.hidden = !note.textContent;
   }
   $("saveAddressesBtn").addEventListener("click", () => {
     renderSavedAddresses();
@@ -901,7 +897,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     input.value = savedAddressText;
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
-    renderSavedAddresses("Bookmark filled");
+    renderSavedAddresses();
     return true;
   }
   $("addrInput").addEventListener("keydown", e => {
