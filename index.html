@@ -2274,6 +2274,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(!posStatusFilter.size || (posStatusFilter.has("open") && posStatusFilter.has("close"))) return true;
     return posStatusFilter.has(positionStatusGroup(p));
   }
+  function positionPnlTone(p){
+    const pnl = Number(p.cashPnl);
+    return Number.isFinite(pnl) && pnl !== 0 ? (pnl > 0 ? "buy" : "sell") : "neutral";
+  }
   function posRowHtml(p, idx){
     const pnl = Number(p.cashPnl)||0;
     const pct = Number(p.percentPnl);
@@ -2288,9 +2292,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       '<td class="outcome">'+esc(p.outcome||"")+(function(){
         const st = posStatus(p);
         return st === "notredeemed" ? ' <span class="badge buy">NOT REDEEMED</span>'
-          : st === "redeemed" ? ' <span class="badge neutral">REDEEMED</span>'
-          : st === "loss" ? ' <span class="badge sell">LOST</span>'
-          : st === "sold" ? ' <span class="badge neutral">SOLD</span>'
+          : st === "redeemed" ? ' <span class="badge pos-pnl-badge '+positionPnlTone(p)+'">REDEEMED</span>'
+          : st === "loss" ? ' <span class="badge pos-pnl-badge '+positionPnlTone(p)+'">LOST</span>'
+          : st === "sold" ? ' <span class="badge pos-pnl-badge '+positionPnlTone(p)+'">SOLD</span>'
           : st === "history" ? ' <span class="badge neutral">HISTORY</span>' : "";
       })()+"</td>",
       '<td class="num mono">'+(p.size != null ? fmtNum(p.size) : "—")+"</td>",
@@ -2728,6 +2732,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const row = rowByPi.get(i);
       if(!row) return;
       row.classList.toggle("pos-redeemable", posStatus(p) === "notredeemed");
+      const statusBadge = row.querySelector(".pos-pnl-badge");
+      if(statusBadge) statusBadge.className = "badge pos-pnl-badge " + positionPnlTone(p);
       const chDir = Number(p.curPrice) >= ch.oldPx ? "px-up" : "px-down";
       const tone = Number(p.cashPnl) > 0 ? "px-up" : Number(p.cashPnl) < 0 ? "px-down" : "";
       if(priceTick) flashPositionPrice(row, p, ch.oldPx);

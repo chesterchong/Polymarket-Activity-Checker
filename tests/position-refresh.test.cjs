@@ -268,7 +268,7 @@ test('the visible shares, average and cost cells refresh even when the midpoint 
   context.posCols = {order: [4, 8, 6, 3, 5, 7, 0, 1, 2, 9]};
   context.posRendered = [original];
   const cells = context.posCols.order.map(() => ({innerHTML: '', classList: {toggle() {}, remove() {}}}));
-  context.$('posBody').children = [{dataset: {pi: '0'}, cells, classList: {contains: kind => kind === 'pos-row', toggle() {}}}];
+  context.$('posBody').children = [{dataset: {pi: '0'}, cells, querySelector: () => null, classList: {contains: kind => kind === 'pos-row', toggle() {}}}];
   context.tweenCell = (cell, old, value, format) => { cell.innerHTML = format(value); };
   context.tickArrow = () => '';
   let valuesRefreshes = 0;
