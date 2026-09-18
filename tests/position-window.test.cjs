@@ -46,6 +46,8 @@ function harness(options = {}) {
     currentWallets: options.wallets || [WALLET_A],
     lastParams: options.params || {},
     positionGroupCache: null,
+    positionMarketTimeValue: () => '',
+    cacheMarketTime() {}, refreshMarketTimeCells() {}, loadMarketTimesFor() {},
     feeCache: new Map(),
     timeWin: '2592000',
     catFilter: new Set(),

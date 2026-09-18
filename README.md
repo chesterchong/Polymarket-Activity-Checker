@@ -24,6 +24,7 @@ To remember an address or a list of addresses, click the bookmark button beside 
 | Field | Meaning |
 | --- | --- |
 | Shares | Number of shares reported for the position. |
+| Market date/time | Scheduled game or event time from market metadata, displayed in the selected ET or GMT+8 timezone. Dates without a published time remain date-only; unavailable schedules show an em dash. Combos with different leg schedules show “Multiple times” with details on hover. CSV exports use ISO timestamps or date-only values. |
 | Avg price | Average entry price per share. |
 | Cur price | Current reported or estimated price per share. |
 | Cost | Position cost basis in USDC, using the supplied `initialValue`. Combo positions use the reported entry cost. An em dash means the cost is unavailable. |
@@ -42,7 +43,7 @@ The window determines which positions appear and which trades contribute fees. P
 
 - Open **Columns** to hide or reorder columns separately for activity and positions. Use **Reset columns** to restore defaults.
 - Drag a column header's edge to resize it; double-click the edge to reset widths.
-- Choose **ET** or **GMT+8** in the side panel for activity timestamps and date filtering.
+- Choose **ET** or **GMT+8** in the side panel for activity timestamps, market date/time, and date filtering.
 - Click **Snapshot** to copy the visible results table as an image. If image clipboard access is unavailable, the app downloads a PNG instead.
 - Use the theme button to switch between light and dark mode.
 - Use **Reset filters** to clear result filters, or **Check activity** again to reload data.

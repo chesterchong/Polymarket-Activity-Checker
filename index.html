@@ -674,7 +674,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <table>
         <thead>
           <tr>
-            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num" title="Cost basis of the position (USDC)">Cost</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th><th class="num" title="Estimated taker fees for this position’s trades in the selected search window and date range; makers pay no fee">Fees (est.)</th>
+            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num" title="Cost basis of the position (USDC)">Cost</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th><th class="num" title="Estimated taker fees for this position’s trades in the selected search window and date range; makers pay no fee">Fees (est.)</th><th id="thMarketTime" title="Scheduled market or event date and time"><span id="marketTimeLabel">Market date/time (ET)</span></th>
           </tr>
         </thead>
         <tbody id="posBody"></tbody>
@@ -1240,6 +1240,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     params.start = win ? String(Math.floor(Date.now()/1000) - Number(win)) : "1";
     lastParams = params;
     for(const [key, schedule] of feeCache) if(schedule?.unavailable) feeCache.delete(key);
+    marketTimeCache.clear(); marketTimeRetryAt.clear();
     feedTruncated = false;
     // rebates are always pre-fetched below; D/W come from the chain, not this API
     deepFetched = new Set(["TAKER_REBATE","MAKER_REBATE","DEPOSIT","WITHDRAWAL"]);
@@ -1534,6 +1535,123 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       : (a.timestamp||0)-(b.timestamp||0));
   }
 
+  // ---------- scheduled market times (not trade or market creation times) ----------
+  const marketTimeCache = new Map(); // conditionId -> scheduled time or null
+  const marketTimeInflight = new Map();
+  const marketTimeRetryAt = new Map();
+  function parseMarketTime(value, source){
+    if(typeof value !== "string") return null;
+    const raw = value.trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(raw)){
+      const date = new Date(raw + "T00:00:00Z");
+      return Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === raw
+        ? {value:raw, dateOnly:true, source} : null;
+    }
+    // Gamma sports times can use a space and a short UTC offset, e.g. +00.
+    const normalized = raw.replace(/^(\d{4}-\d{2}-\d{2}) /, "$1T").replace(/([+-]\d{2})$/, "$1:00");
+    if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized)) return null;
+    if(!parseMarketTime(normalized.slice(0,10), source)) return null;
+    const date = new Date(normalized);
+    return Number.isFinite(date.getTime()) ? {value:date.toISOString(), dateOnly:false, source} : null;
+  }
+  function extractMarketTime(m){
+    for(const [value, source] of [[m.gameStartTime, "Scheduled game time"], [m.eventStartTime, "Scheduled event time"]]){
+      const date = parseMarketTime(value, source);
+      if(date) return date;
+    }
+    const events = Array.isArray(m.events) ? m.events : m.event ? [m.event] : [];
+    for(const [field, source] of [["startTime", "Scheduled event time"], ["eventDate", "Event date"]]){
+      const dates = events.map(e => parseMarketTime(e?.[field], source)).filter(Boolean);
+      const unique = new Map(dates.map(d => [d.value, d]));
+      if(unique.size === 1) return dates[0];
+      if(unique.size > 1) return null; // multiple events do not imply one start time
+    }
+    return null;
+  }
+  function cacheMarketTime(m){
+    if(!m.conditionId) return;
+    const id = m.conditionId.toLowerCase();
+    marketTimeCache.set(id, extractMarketTime(m));
+    marketTimeRetryAt.delete(id);
+  }
+  function marketTimeIds(p){
+    return [...new Set((p.isCombo ? (p.legs || []).map(l => l.leg_condition_id) : [p.conditionId])
+      .filter(Boolean).map(id => id.toLowerCase()))];
+  }
+  function positionMarketTimes(p){
+    const direct = !p.isCombo && extractMarketTime(p);
+    if(direct) return [direct];
+    const ids = marketTimeIds(p);
+    const dates = ids.map(id => marketTimeCache.get(id));
+    if(!dates.length || dates.some(d => !d)) return [];
+    return [...new Map(dates.map(d => [d.value, d])).values()];
+  }
+  function formatMarketTime(date){
+    if(date.dateOnly) return date.value; // never invent midnight or shift a date-only value
+    return new Date(date.value).toLocaleString("en-GB", {day:"2-digit", month:"short", year:"numeric",
+      hour:"2-digit", minute:"2-digit", hour12:false, timeZone:TZ_IANA[tzSel]});
+  }
+  function positionMarketTimeText(p){
+    const dates = positionMarketTimes(p);
+    if(dates.length > 1) return "Multiple times";
+    if(dates.length) return formatMarketTime(dates[0]);
+    return marketTimeIds(p).some(id => marketTimeInflight.has(id)) ? "…" : "—";
+  }
+  function positionMarketTimeTitle(p){
+    const dates = positionMarketTimes(p);
+    if(dates.length) return dates.map(d => d.source + ": " + formatMarketTime(d)
+      + (d.dateOnly ? " (time not provided)" : " (" + tzSel + ")")).join("; ");
+    return marketTimeIds(p).some(id => marketTimeInflight.has(id))
+      ? "Loading scheduled market time" : "Scheduled market time unavailable";
+  }
+  function positionMarketTimeValue(p){
+    return positionMarketTimes(p).map(d => d.value).join(" | ");
+  }
+  function refreshMarketTimeCells(){
+    document.querySelectorAll("#posBody .pos-market-time").forEach(td => {
+      const p = posRendered[Number(td.dataset.pi)];
+      if(p){ td.textContent = positionMarketTimeText(p); td.title = positionMarketTimeTitle(p); }
+    });
+  }
+  async function loadMarketTimesFor(rows){
+    const ids = [...new Set(rows.flatMap(marketTimeIds))];
+    const need = ids.filter(id => !marketTimeCache.has(id) && !marketTimeInflight.has(id)
+      && !(marketTimeRetryAt.get(id) > Date.now()));
+    if(need.length){
+      let task;
+      task = (async () => {
+        try{
+          for(let i=0; i<need.length; i+=20){
+            const chunk = need.slice(i,i+20);
+            let failed = false;
+            for(const closed of [false,true]){
+              const missing = chunk.filter(id => !marketTimeCache.has(id));
+              if(!missing.length) break;
+              try{
+                const res = await fetchWithRetry("https://gamma-api.polymarket.com/markets?"
+                  + missing.map(id => "condition_ids=" + encodeURIComponent(id)).join("&")
+                  + "&closed=" + closed + "&limit=20", 2, 8000);
+                if(!res.ok) throw new Error("HTTP " + res.status);
+                const markets = await res.json();
+                if(!Array.isArray(markets)) throw new Error("Invalid market metadata");
+                for(const m of markets) if(m.conditionId && missing.includes(m.conditionId.toLowerCase())) cacheMarketTime(m);
+              }catch(e){ failed = true; }
+            }
+            for(const id of chunk) if(!marketTimeCache.has(id)){
+              if(failed) marketTimeRetryAt.set(id, Date.now() + 30000);
+              else marketTimeCache.set(id, null);
+            }
+          }
+        }finally{
+          for(const id of need) if(marketTimeInflight.get(id) === task) marketTimeInflight.delete(id);
+          refreshMarketTimeCells();
+        }
+      })();
+      for(const id of need) marketTimeInflight.set(id, task);
+    }
+    await Promise.all([...new Set(ids.map(id => marketTimeInflight.get(id)).filter(Boolean))]);
+  }
+
   // ---------- estimated trade fees (Gamma fee schedules, fetched lazily) ----------
   // fee = rate × min(price, 1−price)^exponent × shares — the taker fee formula.
   // Makers pay no fee on takerOnly schedules, so this is an upper-bound estimate.
@@ -1609,6 +1727,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             const mkts = await res.json();
             for(const m of (Array.isArray(mkts) ? mkts : [])){
               if(!m.conditionId) continue;
+              cacheMarketTime(m);
               let sch = m.feeSchedule;
               if(typeof sch === "string"){ try{ sch = JSON.parse(sch); }catch(e){ sch = null; } }
               const rate = sch && Number(sch.rate);
@@ -1626,6 +1745,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       // A failed or incomplete response cannot establish that a market was fee-free.
       chunk.forEach(id => { if(!feeCache.has(id)) feeCache.set(id, {unavailable:true}); });
       refreshFeeCells();
+      refreshMarketTimeCells();
       renderSummary(); // keep the Fees (est.) stat converging as schedules arrive
     }
     need.forEach(id => feeInflight.delete(id));
@@ -2106,7 +2226,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         : '<td class="num mono '+(pnl >= 0 ? "pos" : "neg")+'">'+(pnl < 0 ? "-$" : "$")+fmtUsd(Math.abs(pnl))
           + (p.percentPnl != null && isFinite(pct) ? ' <span class="pnl-pct">('+(pct >= 0 ? "+" : "")+pct.toFixed(1)+'%)</span>' : "")+"</td>"),
       '<td class="mono">'+esc(p.endDate||"")+"</td>",
-      '<td class="num mono pos-fee-cell" data-pi="'+idx+'" title="Estimated taker fees for trades in the selected search window and date range; makers pay no fee">'+positionFeeText(p)+"</td>"
+      '<td class="num mono pos-fee-cell" data-pi="'+idx+'" title="Estimated taker fees for trades in the selected search window and date range; makers pay no fee">'+positionFeeText(p)+"</td>",
+      '<td class="mono pos-market-time" data-pi="'+idx+'" title="'+esc(positionMarketTimeTitle(p))+'">'+esc(positionMarketTimeText(p))+"</td>"
     ];
     return '<tr class="pos-row'+(posStatus(p) === "notredeemed" ? " pos-redeemable" : "")+(expandedPos.has(posKey(p))?" expanded":"")+'" data-pi="'+idx+'">'
       + posCols.order.map(i => cells[i]).join("") + "</tr>";
@@ -2137,6 +2258,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       el.textContent = (catCounts[el.parentElement.dataset.cat] || 0).toLocaleString());
     const rows = visiblePositions();
     loadFeesFor(rows.flatMap(positionTradesFor));
+    loadMarketTimesFor(rows.slice(0, POS_VIEW_CAP));
     setPosNote(buildPosNote(rows, q));
     posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
     hideTooltip(); // rows are being replaced under any open tooltip
@@ -2618,10 +2740,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   setInterval(pollBalance, LIVE_MS);
 
   function positionsCsv(rows){
-    const cols = ["proxyWallet","title","outcome","status","size","avgPrice","curPrice","initialValue","feeEstimate","currentValue","payout","cashPnl","percentPnl","realizedPnl","endDate","conditionId"];
+    const cols = ["proxyWallet","title","marketDateTime","outcome","status","size","avgPrice","curPrice","initialValue","feeEstimate","currentValue","payout","cashPnl","percentPnl","realizedPnl","endDate","conditionId"];
     // csvCell carries the spreadsheet formula-injection guard used by the activity CSV
     return cols.join(",") + "\n" + rows.map(p =>
       cols.map(c => {
+        if(c === "marketDateTime") return csvCell(positionMarketTimeValue(p));
         if(c === "feeEstimate"){
           const fee = positionFeeEstimate(p);
           return csvCell(fee === undefined ? "" : fee.toFixed(6));
@@ -3123,6 +3246,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.tz === tzSel));
     $("thTime").innerHTML = "Time (" + esc(tzSel) + ') <span id="sortArrow">' + (sortDir === "desc" ? "▼" : "▲") + "</span>";
     actCols.colNames[0] = "Time (" + tzSel + ")";
+    $("marketTimeLabel").textContent = "Market date/time (" + tzSel + ")";
+    posCols.colNames[11] = "Market date/time (" + tzSel + ")";
     buildColsList();
   }
   document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.addEventListener("click", ()=>{
@@ -3193,10 +3318,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       localStorage.setItem("pmac_pos_col_order", JSON.stringify(saved));
     }
   }catch(e){}
+  // Append the logical date/time column so saved visibility and live-update indices stay intact.
+  try{
+    const saved = JSON.parse(localStorage.getItem("pmac_pos_col_order"));
+    if(Array.isArray(saved) && saved.length === 11
+      && [...saved].sort((a,b)=>a-b).every((v,i)=>v===i)){
+      saved.splice(saved.indexOf(1) + 1, 0, 11);
+      localStorage.setItem("pmac_pos_col_order", JSON.stringify(saved));
+    }
+  }catch(e){}
   const posCols = makeTableCfg(
-    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Cost","Value","PnL","End date","Fees (est.)"],
+    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Cost","Value","PnL","End date","Fees (est.)","Market date/time (ET)"],
     "posWrap", "pmac_pos_col_order", "pmac_pos_hidden_cols",
-    () => { posRenderKey = null; renderPositions(); }, [0,1,2,3,4,5,6,10,7,8,9]);
+    () => { posRenderKey = null; renderPositions(); }, [0,1,11,2,3,4,5,6,10,7,8,9]);
   const activeColsCfg = () => $("tabPositions").classList.contains("on") ? posCols : actCols;
   function updateColsDot(){
     $("sideTab").classList.toggle("has-hidden", activeColsCfg().hidden.size > 0);
@@ -3510,11 +3644,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     }
   });
 
-  $("dlBtn").addEventListener("click", ()=>{
+  $("dlBtn").addEventListener("click", async ()=>{
     if($("tabJson").classList.contains("on"))
       download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2));
-    else if($("tabPositions").classList.contains("on"))
-      download("polymarket-positions.csv","text/csv",positionsCsv(visiblePositions()));
+    else if($("tabPositions").classList.contains("on")){
+      const rows = visiblePositions(), myRun = posRunSeq;
+      $("dlBtn").disabled = true;
+      try{
+        await loadMarketTimesFor(rows);
+        if(myRun === posRunSeq) download("polymarket-positions.csv","text/csv",positionsCsv(rows));
+      }finally{ $("dlBtn").disabled = false; }
+    }
     else
       download("polymarket-activity.csv","text/csv",toCsv(filteredRecords));
   });
