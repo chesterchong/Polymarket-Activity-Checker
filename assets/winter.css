@@ -1,0 +1,62 @@
+/* A quiet winter street behind the dashboard's frosted glass. */
+:root{
+  --background:rgba(231,240,250,.7);
+  --foreground:#15263a;
+  --card:rgba(246,250,255,.83);
+  --muted:rgba(219,231,244,.88);
+  --muted-foreground:#53657a;
+  --border:rgba(78,105,137,.2);
+  --input-bg:rgba(245,249,255,.38);
+  --winter-base:#d4e0eb;
+  --winter-wash:rgba(219,233,245,.36);
+  --winter-shadow:0 12px 40px rgba(13,31,50,.1),inset 0 1px 0 rgba(255,255,255,.5);
+}
+.dark{
+  --background:rgba(10,20,32,.66);
+  --foreground:#f0f5fc;
+  --card:rgba(17,29,44,.82);
+  --muted:rgba(32,47,65,.9);
+  --muted-foreground:#a3b3c8;
+  --border:rgba(190,215,242,.14);
+  --input-bg:rgba(13,25,40,.36);
+  --winter-base:#0d1826;
+  --winter-wash:rgba(5,14,26,.36);
+  --winter-shadow:0 12px 40px rgba(0,8,20,.2),inset 0 1px 0 rgba(219,235,255,.06);
+}
+body{background:var(--winter-base); isolation:isolate;}
+.winter-scene{position:fixed; inset:0; z-index:-1; overflow:hidden; pointer-events:none; contain:strict; background:#283b50;}
+.winter-street{position:absolute; inset:0; background:url('./winter-window.jpg') center center/cover no-repeat;}
+.winter-street::after{content:""; position:absolute; inset:0; background:linear-gradient(180deg,rgba(7,18,31,.22),transparent 48%,rgba(5,16,28,.08));}
+.winter-traffic{position:absolute; inset:0; opacity:.66; filter:blur(7px);}
+.passing-light{position:absolute; left:29%; top:65%; width:96px; height:20px; border-radius:50%; color:#ffe4b7; background:radial-gradient(ellipse at 28% 50%,currentColor 0 10%,transparent 35%),radial-gradient(ellipse at 75% 50%,currentColor 0 10%,transparent 35%); animation:streetPass 20s linear infinite;}
+.passing-light::after{content:""; position:absolute; top:22px; left:12px; width:72px; height:65px; background:linear-gradient(currentColor,transparent); opacity:.17; transform:skewX(-25deg); filter:blur(6px);}
+.passing-light:nth-child(2){left:34%; top:65%; color:#f7b39a; animation-duration:26s; animation-delay:-14s; animation-direction:reverse; width:62px; opacity:.65;}
+.passing-light:nth-child(3){left:28%; top:66%; animation-duration:29s; animation-delay:-21s; width:70px; opacity:.55;}
+@keyframes streetPass{0%{transform:translate(0,0) scale(.4); opacity:0;}12%,76%{opacity:.7;}100%{transform:translate(42vw,42vh) scale(1.2); opacity:0;}}
+.winter-snow{position:absolute; inset:0; width:100%; height:100%; opacity:.72; filter:blur(.35px);}
+.winter-frost{position:absolute; inset:0; background:radial-gradient(ellipse at 0 12%,rgba(222,237,249,.22),transparent 43%),radial-gradient(ellipse at 100% 90%,rgba(215,233,248,.18),transparent 37%),var(--winter-wash); box-shadow:inset 0 0 95px rgba(215,231,246,.12);}
+.page{isolation:isolate;}
+.header .sub{color:#263d56;}
+.dark .header .sub{color:#d0dced; text-shadow:0 1px 4px rgba(3,12,23,.25);}
+.card,.summary,.results-bar,.side-panel,.side-tabs{
+  -webkit-backdrop-filter:blur(18px) saturate(115%);
+  backdrop-filter:blur(18px) saturate(115%);
+  box-shadow:var(--winter-shadow);
+}
+.card,.summary,.results-bar{border-radius:12px;}
+.card{overflow:clip;}
+.table-wrap{background:var(--card); border-radius:10px; box-shadow:var(--winter-shadow);}
+.side-tabs{border-radius:0 10px 10px 0;}
+.side-panel{border-radius:10px 0 0 10px;}
+.icon-btn{border-radius:8px; background:var(--card); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);}
+#tooltip{background:var(--winter-base); border-radius:8px;}
+footer{align-self:flex-start; background:var(--card); padding:6px 10px; border:1px solid var(--border); border-radius:8px; font-size:11px;}
+.winter-paused .passing-light{animation-play-state:paused;}
+@media(max-width:640px){
+  .winter-street{background-position:53% center;}
+  .winter-traffic{display:none;}
+  .card,.summary,.results-bar,.side-panel,.side-tabs{-webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);}
+}
+@media(prefers-reduced-motion:reduce){
+  .passing-light{animation:none; display:none;}
+}

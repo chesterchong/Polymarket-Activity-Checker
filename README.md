@@ -43,8 +43,10 @@ The window determines which positions appear and which trades contribute fees. P
 - Active Position starts with **Market time**, newest first, and **Wallet** hidden. Unknown times appear last; combos sort by their latest leg. Open **Columns** to change the layout or **Reset columns** to restore defaults.
 - Drag a column header's edge to resize it; double-click the edge to reset widths.
 - **GMT+8** is the default timezone. Choose **ET** or **GMT+8** in the side panel for timestamps and date filtering; your choice is saved.
+- Open **Date range**, select the start and end dates in one calendar, then **Apply**. **Clear** removes the range when applied; Escape cancels unfinished changes.
 - Click **Snapshot** to copy the visible results table as an image. If image clipboard access is unavailable, the app downloads a PNG instead.
 - Use the theme button to switch between light and dark mode.
+- A frosted winter street wallpaper sits behind the glass panels, with gentle snowfall and passing lights. Motion pauses in hidden tabs and respects your device's reduced-motion setting.
 - Use **Clear** beside **Check activity** to empty the address field. Saved bookmarks and current results stay available.
 - Use **Reset filters** to clear result filters, or **Check activity** again to reload data.
 
@@ -61,7 +63,7 @@ The app requests data directly from Polymarket APIs, Polygon Blockscout, and a p
 
 ## Run locally
 
-The app is a static `index.html` containing its HTML, CSS, and JavaScript. No package installation or build step is required.
+The app is a static `index.html` with supporting styles, scripts, and wallpaper in `assets/`. No package installation or build step is required.
 
 With Git and Python 3 installed:
 
