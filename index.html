@@ -225,6 +225,11 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .results-bar.pos-mode .fchips.pos-only{display:inline-flex;}
 .refresh-countdown{display:none; align-items:center; justify-content:center; gap:4px; width:28px; height:32px; flex:0 0 28px; color:var(--success);}
 .results-bar.pos-mode .refresh-countdown{display:inline-flex;}
+.refresh-status{display:none; align-items:center; gap:12px; flex:0 0 auto; height:32px; white-space:nowrap;}
+.results-bar.pos-mode .refresh-status{display:inline-flex;}
+.digital-clock{display:inline-flex; align-items:baseline; gap:7px; color:var(--foreground);}
+.digital-clock time{font-size:13px; font-variant-numeric:tabular-nums; letter-spacing:.03em;}
+.digital-clock-zone{font-size:10px; color:var(--muted-foreground);}
 .refresh-countdown i{display:block; width:4px; height:17px; border-radius:2px; background:currentColor; transition:opacity .15s ease;}
 .refresh-countdown[data-bars="2"] i:nth-child(3),
 .refresh-countdown[data-bars="1"] i:nth-child(n+2),
@@ -633,7 +638,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             <input type="search" id="searchBox" placeholder="Filter markets…" aria-label="Filter results">
           </span>
         </span>
-        <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" data-bars="3" data-state="live" aria-label="Next refresh in 3 seconds" title="Next refresh in 3 seconds"><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i></span>
+        <span class="refresh-status">
+          <span id="refreshCountdown" class="refresh-countdown" role="timer" aria-live="off" data-bars="3" data-state="live" aria-label="Next refresh in 3 seconds" title="Next refresh in 3 seconds"><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i></span>
+          <span class="digital-clock" aria-live="off"><time id="digitalClockTime" class="mono">--:--:--</time><span id="digitalClockZone" class="digital-clock-zone">GMT+8</span></span>
+        </span>
         <span id="chips" class="chips"></span>
         <span class="flex-spacer"></span>
         <button class="btn btn-ghost" id="resetBtn" title="Reset all filters">Reset filters</button>
@@ -805,6 +813,29 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return d.toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",
       timeZone: TZ_IANA[tzSel]});
   };
+  // A wall clock, independent of the positions refresh countdown.
+  let digitalClockTimer = null, digitalClockFormatter = null, digitalClockZone = "";
+  function updateDigitalClock(){
+    if(digitalClockZone !== tzSel){
+      digitalClockZone = tzSel;
+      digitalClockFormatter = new Intl.DateTimeFormat("en-GB", {
+        timeZone:TZ_IANA[tzSel], hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"
+      });
+    }
+    const now = new Date(), time = $("digitalClockTime");
+    time.textContent = digitalClockFormatter.format(now);
+    time.dateTime = now.toISOString();
+    time.title = "Current time · " + tzSel;
+    $("digitalClockZone").textContent = tzSel;
+  }
+  function tickDigitalClock(){
+    clearTimeout(digitalClockTimer);
+    if(document.hidden) return;
+    updateDigitalClock();
+    digitalClockTimer = setTimeout(tickDigitalClock, 1000 - Date.now() % 1000);
+  }
+  document.addEventListener("visibilitychange", tickDigitalClock);
+  tickDigitalClock();
   // UTC ms of a calendar day's start (or last ms) in the selected zone —
   // iterate because the zone's offset at the guess can shift the wall clock.
   // End-of-day is 1ms before the NEXT day's midnight, not midnight + 24h:
@@ -3298,6 +3329,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // time-zone toggle: relabels the Time headers and re-renders every timestamp
   // (activity rows, open trade-history panels) plus the date-filter bounds
   function applyTz(){
+    updateDigitalClock();
     window.DateRangePicker?.setTimezone(tzSel);
     document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.tz === tzSel));
     $("thTime").innerHTML = "Time (" + esc(tzSel) + ') <span id="sortArrow">' + (sortDir === "desc" ? "▼" : "▲") + "</span>";
