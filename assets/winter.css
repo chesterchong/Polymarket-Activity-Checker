@@ -2,7 +2,7 @@
 :root{
   --background:rgba(231,240,250,.7);
   --foreground:#15263a;
-  --card:rgba(246,250,255,.83);
+  --card:rgba(246,250,255,.95);
   --muted:rgba(219,231,244,.88);
   --muted-foreground:#53657a;
   --border:rgba(78,105,137,.2);
@@ -15,7 +15,7 @@
 .dark{
   --background:rgba(10,20,32,.66);
   --foreground:#f0f5fc;
-  --card:rgba(17,29,44,.82);
+  --card:rgba(17,29,44,.95);
   --muted:rgba(32,47,65,.9);
   --muted-foreground:#a3b3c8;
   --border:rgba(190,215,242,.14);
