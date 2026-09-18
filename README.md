@@ -17,7 +17,7 @@ A browser-based tool for viewing public Polymarket wallet activity, positions, b
 
 No wallet connection, private key, seed phrase, or transaction signing is required. The app reads public data and does not place trades.
 
-To remember an address or a list of addresses, click the bookmark button beside the theme button. They are saved only in this browser's local storage. On your next visit, the address field shows them as a gray suggestion; focus the field and press **Tab** to fill it, then click **Check activity**. Edit the field and click the bookmark to overwrite the saved list. Clicking again or with an empty field keeps your saved addresses; the button never removes them. Searching alone does not save addresses.
+To remember an address or a list of addresses, click the bookmark button beside the theme button. They are saved only in this browser's local storage. On your next visit, the address field shows them as a gray suggestion; focus the empty field and press **Tab**, or double-click it, to fill the saved addresses, then click **Check activity**. Edit the field and click the bookmark to overwrite the saved list. Clicking again or with an empty field keeps your saved addresses; the button never removes them. Searching alone does not save addresses.
 
 ## Reading positions and statistics
 
@@ -72,6 +72,24 @@ python3 -m http.server 8000 --bind 127.0.0.1
 ```
 
 Open [http://localhost:8000](http://localhost:8000). An internet connection is required to fetch data and external assets. Stop the local server with `Ctrl+C`.
+
+## Manual deployment
+
+Production deployments are manual. The Vercel project's Git repository connection is disconnected, and `vercel.json` disables Git-triggered deployments for all branches. Pushing to GitHub stores the code without publishing it.
+
+From a checkout linked to the existing Vercel project, publish the current local files with:
+
+```sh
+vercel deploy --prod --scope chesterchongs-projects
+```
+
+For a new checkout, first run `vercel login`, then link it to the existing project:
+
+```sh
+vercel link --yes --scope chesterchongs-projects --project polymarket-activity-checker
+```
+
+Keep `.vercel` and `.env*` files local. GitHub push and manual deployment are separate actions; commit and push the intended changes before running the deploy command. The production domain remains [polymarket-activity-checker-navy.vercel.app](https://polymarket-activity-checker-navy.vercel.app/).
 
 ## Copyright and disclaimer
 

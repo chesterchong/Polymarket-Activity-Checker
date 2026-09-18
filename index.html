@@ -532,7 +532,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             <button type="button" class="seg-btn" data-v="31536000" title="Last 365 days">1y</button>
             <button type="button" class="seg-btn" data-v="" title="Complete history">All</button>
           </div>
-          <span class="hint">Filters appear below the statistics after checking.</span>
         </div>
         <button class="btn btn-primary" id="submitBtn">Check activity</button>
       </div>
@@ -848,8 +847,9 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     button.setAttribute("aria-label", label);
     button.title = label;
     input.placeholder = savedAddressText || "0x...";
+    input.title = savedAddressText && !input.value ? "Press Tab or double-click to fill saved addresses" : "";
     note.textContent = message || (savedAddressText
-      ? (!input.value ? "Saved in this browser · Press Tab in the address field to fill" : saved ? "Addresses saved in this browser." : "Saved addresses available. Click the bookmark to replace them with this list.")
+      ? (!input.value ? "Press Tab to auto fill" : saved ? "Addresses saved in this browser." : "Saved addresses available. Click the bookmark to replace them with this list.")
       : "");
     note.classList.toggle("error", isError);
     note.hidden = !note.textContent;
@@ -874,13 +874,22 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     }
   });
   $("addrInput").addEventListener("input", () => renderSavedAddresses());
+  function fillSavedAddresses(){
+    const input = $("addrInput");
+    if(!savedAddressText || input.value) return false;
+    input.value = savedAddressText;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    renderSavedAddresses("Saved addresses filled. Click Check activity to search.");
+    return true;
+  }
   $("addrInput").addEventListener("keydown", e => {
     if(e.key !== "Tab" || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.isComposing || !savedAddressText || $("addrInput").value) return;
     e.preventDefault();
-    const input = $("addrInput");
-    input.value = savedAddressText;
-    input.setSelectionRange(input.value.length, input.value.length);
-    renderSavedAddresses("Saved addresses filled. Click Check activity to search.");
+    fillSavedAddresses();
+  });
+  $("addrInput").addEventListener("dblclick", e => {
+    if(fillSavedAddresses()) e.preventDefault();
   });
   renderSavedAddresses();
 
