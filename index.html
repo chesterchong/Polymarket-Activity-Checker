@@ -59,7 +59,7 @@ body{
   transition:background .2s,color .2s;
 }
 .mono{font-family:'Geist Mono',ui-monospace,monospace;}
-.page{position:relative; min-height:100svh; overflow-x:hidden; padding:48px 16px 80px; display:flex; flex-direction:column; align-items:center;}
+.page{position:relative; min-height:100svh; overflow-x:clip; padding:48px 16px 80px; display:flex; flex-direction:column; align-items:center;}
 .wrap{position:relative; width:100%; max-width:67rem; display:flex; flex-direction:column; gap:16px;}
 
 /* header */
@@ -185,9 +185,11 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .table-area .table-main{flex:1 1 auto; min-width:0; display:flex; flex-direction:column;}
 .table-area .table-main > .active{flex:1 1 auto;}
 .side-bar{display:flex; align-items:stretch; flex:0 0 auto;}
-.side-panel{width:0; overflow:hidden; border:1px solid var(--border); border-right:none; background:var(--card); transition:width .15s ease;}
+.side-panel{width:0; overflow:clip; border:1px solid var(--border); border-right:none; background:var(--card); transition:width .15s ease;}
 .side-bar.open .side-panel{width:220px;}
 .sp-inner{position:sticky; top:8px; width:220px; box-sizing:border-box; padding:14px; display:flex; flex-direction:column; gap:8px;}
+.sp-inner[hidden]{display:none;}
+.sp-inner{max-height:calc(100vh - 16px); overflow-y:auto; overscroll-behavior:contain;}
 .sp-title{font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted-foreground);}
 .sp-reset{margin-top:8px; align-self:flex-start; font-size:12px; height:28px; padding:0 10px; border-radius:999px;}
 /* time-zone picker lives in the same panel, under its own heading */
@@ -203,6 +205,7 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
   padding:14px 7px; cursor:pointer;
 }
 .side-tab:hover{color:var(--foreground);}
+.side-tab:focus-visible{outline:2px solid var(--primary); outline-offset:-3px;}
 .side-bar.open .side-tab{color:var(--primary); box-shadow:inset -2px 0 0 var(--primary);}
 .side-tab .dot{display:none; width:6px; height:6px; border-radius:50%; background:var(--primary);}
 .side-tab.has-hidden .dot{display:block;}
@@ -454,9 +457,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
 /* columns show/hide + reorder list (in the right-side panel) */
 .cols-list{display:flex; flex-direction:column;}
-.cols-item{display:flex; align-items:center; gap:8px; padding:6px 4px; font-size:13px; cursor:pointer; white-space:nowrap;}
+.cols-item{display:flex; align-items:center; gap:8px; padding:6px 4px; border-radius:6px; font-size:13px; cursor:pointer; white-space:nowrap;}
 .cols-item:hover{background:var(--muted);}
-.cols-item input{accent-color:var(--primary);}
+.cols-label{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;}
+.cols-item.off{color:var(--muted-foreground);}
+.cols-check{appearance:none; flex:0 0 15px; width:15px; height:15px; border:1.5px solid var(--muted-foreground); border-radius:50%; cursor:pointer; position:relative;}
+.cols-check:checked{background:var(--primary); border-color:var(--primary);}
+.cols-check:checked::after{content:""; position:absolute; left:3px; top:1px; width:4px; height:7px; border:solid white; border-width:0 1.5px 1.5px 0; transform:rotate(45deg);}
+.cols-check:focus-visible{outline:2px solid var(--primary); outline-offset:3px;}
 .cols-item .drag-dots{color:var(--muted-foreground); cursor:grab; font-size:13px; user-select:none;}
 .cols-item.dragging{opacity:.35;}
 .cols-item.drop-above{box-shadow:inset 0 2px 0 var(--primary);}
@@ -473,6 +481,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 <link rel="preload" as="image" href="assets/winter-window.jpg">
 <script defer src="assets/winter.js"></script>
 <link rel="stylesheet" href="assets/date-range.css">
+<link rel="stylesheet" href="assets/values-panel.css">
+<link rel="stylesheet" href="assets/grid-values.css">
 </head>
 <body>
 <div class="winter-scene" aria-hidden="true">
@@ -653,6 +663,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
+        <tfoot id="activityTotals" hidden></tfoot>
       </table>
       <div class="load-more-row" id="loadMoreRow"><button class="btn" id="loadMoreBtn">Show more rows</button></div>
     </div>
@@ -666,16 +677,19 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
           </tr>
         </thead>
         <tbody id="posBody"></tbody>
+        <tfoot id="positionTotals" hidden></tfoot>
       </table>
     </div>
     </div><!-- /.table-main -->
 
     <div class="side-bar" id="sideBar">
       <div class="side-panel">
-        <div class="sp-inner">
+        <div class="sp-inner" id="columnsPanel" role="region" aria-labelledby="sideTab" hidden>
           <div class="sp-title">Columns</div>
           <div id="colsList" class="cols-list"></div>
           <button type="button" class="btn btn-ghost sp-reset" id="colsReset" title="Restore this view's default column order and visibility">Reset columns</button>
+          <div id="activityValues"></div>
+          <div id="positionValues" hidden></div>
           <div class="sp-title sp-tz-title">Time zone</div>
           <div class="seg sp-tz" id="tzSeg" role="group" aria-label="Time zone" title="Time zone for the Time column and the date filter">
             <button type="button" class="seg-btn" data-tz="ET" title="US Eastern time">ET</button>
@@ -684,7 +698,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         </div>
       </div>
       <div class="side-tabs">
-        <button type="button" class="side-tab" id="sideTab" aria-expanded="false" title="Show or hide the column picker">Columns<span class="dot"></span></button>
+        <button type="button" class="side-tab" id="sideTab" aria-expanded="false" aria-controls="columnsPanel" title="Columns, row groups and values">Columns<span class="dot"></span></button>
       </div>
     </div>
     </div><!-- /.table-area -->
@@ -697,6 +711,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 <div id="tooltip" role="tooltip"></div>
 
 <script src="assets/date-range.js"></script>
+<script src="assets/values-math.js"></script>
+<script src="assets/values-data.js"></script>
+<script src="assets/values-groups.js"></script>
+<script src="assets/values-panel.js"></script>
 <script>
 (function(){
   "use strict";
@@ -723,6 +741,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let renderedCount = 0;
   let pagesFetched = 0;
   let fetching = false;
+  let valuePanels = null;
+  const gridState = {
+    activity: {signature:null, collapsed:new Set()},
+    positions: {signature:null, collapsed:new Set()}
+  };
   let sortDir = "desc";   // Time column sort direction
   let marketFilter = null; // {conditionId, eventSlug, slug, title} set by clicking a row's type badge
   // category filter chips: multi-select inclusion filter; empty set = show everything.
@@ -1450,6 +1473,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       errBox.textContent = "Request failed — " + e.message;
     }finally{
       fetching = false;
+      refreshValues();
       $("submitBtn").disabled = false;
       $("progressBox").classList.remove("active");
       $("searchTimeNote").textContent = fmtDur(performance.now() - tStart) + " taken";
@@ -1497,6 +1521,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       + (rows.length !== allRecords.length ? " / " + allRecords.length.toLocaleString() : "");
     $("stVolume").textContent = "$" + fmtUsd(vol);
     $("stPages").textContent = pagesFetched.toLocaleString();
+    refreshValues();
   }
 
   function renderAll(){
@@ -1750,6 +1775,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const p = posRendered[Number(td.dataset.pi)];
       if(p) td.textContent = positionFeeText(p);
     });
+    refreshValues();
   }
   const feeInflight = new Set();
   async function loadFeesFor(rows){
@@ -1837,11 +1863,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(reset){ body.innerHTML=""; renderedCount=0; hideTooltip(); }
     const start = renderedCount;
     const next = filteredRecords.slice(start, start+pageSize);
-    body.insertAdjacentHTML("beforeend", next.map((r,i)=>rowHtml(r, start+i)).join(""));
     renderedCount += next.length;
+    if(valuePanels?.activity.getGroups().length){
+      body.innerHTML = filteredRecords.slice(0, renderedCount).map((r,i)=>rowHtml(r, i)).join("");
+    }else{
+      body.insertAdjacentHTML("beforeend", next.map((r,i)=>rowHtml(r, start+i)).join(""));
+    }
+    gridState.activity.signature = null;
     loadFeesFor(next); // async; fills "…" fee cells once schedules arrive
     $("loadMoreRow").classList.toggle("active", renderedCount < filteredRecords.length);
     $("loadMoreBtn").textContent = "Show more (" + (filteredRecords.length-renderedCount).toLocaleString() + " remaining)";
+    refreshValues();
   }
 
   function setView(tab, wrap){
@@ -1851,6 +1883,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("resultsBar").classList.toggle("pos-mode", tab === "tabPositions");
     buildColsList();
     updateColsDot();
+    refreshValues();
   }
   function showTable(){
     setView("tabTable", "tableWrap");
@@ -1899,9 +1932,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function setSidebar(open){
     $("sideBar").classList.toggle("open", open);
     $("sideTab").setAttribute("aria-expanded", String(open));
+    $("columnsPanel").hidden = !open;
     try{ localStorage.setItem(SIDEBAR_KEY, open ? "1" : ""); }catch(e){}
   }
-  $("sideTab").addEventListener("click", ()=>setSidebar(!$("sideBar").classList.contains("open")));
+  $("sideTab").addEventListener("click", event => {
+    const open = !$("sideBar").classList.contains("open");
+    setSidebar(open);
+    if(open && event.detail === 0) $("colsList").querySelector("input")?.focus();
+  });
   try{ if(localStorage.getItem(SIDEBAR_KEY) === "1") setSidebar(true); }catch(e){}
   // scrolling any other way (scrollbar, shift+wheel, trackpad) hides the pill for
   // now but lets it reappear on a later search, since they may not have seen it
@@ -2305,6 +2343,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
     hideTooltip(); // rows are being replaced under any open tooltip
     $("posBody").innerHTML = posRendered.map((p, i) => posRowHtml(p, i)).join("");
+    gridState.positions.signature = null;
     // re-open detail rows the user had expanded before this re-render
     if(expandedPos.size)
       [...$("posBody").children].forEach(tr => {
@@ -2313,6 +2352,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       });
     // grab-cursor affordance when the positions table overflows sideways
     $("posWrap").classList.toggle("grabbable", $("posWrap").scrollWidth > $("posWrap").clientWidth);
+    refreshValues();
   }
   function buildPosNote(rows, q){
     let note = "";
@@ -2727,6 +2767,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // Portfolio value comes from an absolute /value snapshot. Adding position
     // deltas to a separately fetched total could double-count sales below zero.
     setPosNote(buildPosNote(visiblePositions(), $("searchBox").value.trim()));
+    refreshValues();
   }
   function tickLiveRefresh(){
     if(Date.now() >= nextLiveRefreshAt) pollLiveHoldings();
@@ -3367,6 +3408,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       .join("");
     try{ localStorage.setItem(cfg.hiddenKey, JSON.stringify([...cfg.hidden])); }catch(e){}
     updateColsDot();
+    refreshValues();
   }
   function cfgApplyOrder(cfg){
     cfg.order.forEach(i => cfg.headRow.appendChild(cfg.origThs[i]));
@@ -3378,15 +3420,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function buildColsList(){
     const cfg = activeColsCfg();
     $("colsList").innerHTML = cfg.order.map((i, pos) =>
-      '<label class="cols-item" draggable="true" data-pos="'+pos+'">'
-      + '<span class="drag-dots" title="Drag to reorder">⠿</span>'
-      + '<input type="checkbox" data-col="'+i+'"'+(cfg.hidden.has(i) ? "" : " checked")+'> '+esc(cfg.colNames[i])+'</label>'
+      '<label class="cols-item'+(cfg.hidden.has(i) ? ' off' : '')+'" draggable="true" data-pos="'+pos+'" data-col-index="'+i+'">'
+      + '<span class="drag-dots" draggable="true" title="Drag to reorder or add to row groups and values">⠿</span>'
+      + '<span class="cols-label">'+esc(cfg.colNames[i])+'</span>'
+      + '<input class="cols-check" type="checkbox" aria-label="Show '+esc(cfg.colNames[i])+'" data-col="'+i+'"'+(cfg.hidden.has(i) ? "" : " checked")+'></label>'
     ).join("");
   }
   $("colsList").addEventListener("change", e => {
     const cfg = activeColsCfg();
     const i = Number(e.target.dataset.col);
     if(e.target.checked) cfg.hidden.delete(i); else cfg.hidden.add(i);
+    e.target.closest(".cols-item").classList.toggle("off", !e.target.checked);
     cfgApplyHidden(cfg);
   });
   $("colsReset").addEventListener("click", ()=>{
@@ -3408,10 +3452,17 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     const it = e.target.closest(".cols-item"); if(!it) return;
     dragPos = Number(it.dataset.pos);
     it.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.effectAllowed = "copyMove";
     try{ e.dataTransfer.setData("text/plain", String(dragPos)); }catch(_){}
+    const index = Number(it.dataset.colIndex);
+    const column = {id:String(index), label:activeColsCfg().colNames[index], valueField:valueFieldForColumn(activeColsCfg(), index)};
+    e.dataTransfer.setData("application/x-pmac-column", JSON.stringify(column));
+    activeValuesPanel()?.setDragColumn(column);
   });
-  colsListEl.addEventListener("dragend", () => { clearDropMarks(); dragPos = null; });
+  document.addEventListener("dragend", () => {
+    clearDropMarks(); dragPos = null;
+    if(valuePanels) Object.values(valuePanels).forEach(panel => panel.setDragColumn(null));
+  });
   colsListEl.addEventListener("dragover", e => {
     const it = e.target.closest(".cols-item"); if(!it || dragPos === null) return;
     e.preventDefault();
@@ -3435,6 +3486,189 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   cfgApplyOrder(actCols);
   cfgApplyOrder(posCols);
   applyTz(); // restore the saved time zone's labels + toggle state
+
+  // ---------- grouping and values (all matching rows, before display limits) ----------
+  function valueFieldForColumn(cfg, index){
+    return (cfg === posCols
+      ? {3:"size",4:"avgPrice",5:"curPrice",6:"initialValue",7:"value",8:"cashPnl",10:"feeEstimate"}
+      : {6:"size",7:"price",8:"usdcSize",9:"feeEstimate"})[index];
+  }
+  function activeValuesPanel(){
+    return valuePanels?.[$("tabPositions").classList.contains("on") ? "positions" : "activity"];
+  }
+  function gridGroupValue(view, row, field){
+    const index = Number(field), positions = view === "positions";
+    const cfg = positions ? posCols : actCols;
+    const valueField = valueFieldForColumn(cfg, index);
+    if(valueField){
+      const value = valueField === "feeEstimate" ? (positions ? positionFeeEstimate(row) : computeFeeFor(row))
+        : valueField === "value" ? (row.isRedeemed ? row.payout : row.currentValue) : row[valueField];
+      return {key:value == null ? null : Number(value), label:value == null ? "—" : String(value)};
+    }
+    const data = positions
+      ? {0:row.proxyWallet, 1:row.conditionId || row.eventSlug || row.slug || row.title,
+          2:row.outcome, 9:row.endDate, 11:positionMarketTimeText(row)}
+      : {0:row.timestamp, 1:row.proxyWallet, 2:row.type,
+          3:row.conditionId || row.eventSlug || row.slug || row.title,
+          4:row.outcome, 5:row.side, 10:row.transactionHash};
+    let key = data[index];
+    if(key === "" || key === "—") key = null;
+    let label = key == null ? "—" : String(key);
+    if(index === (positions ? 1 : 3)) label = row.title || label;
+    if(index === (positions ? 0 : 1) && key) { key = key.toLowerCase(); label = short(key); }
+    if(!positions && index === 0 && key != null) label = fmtTime(key);
+    return {key, label};
+  }
+  function gridAggregateCell(view, rows, field, op, samples){
+    const result = ValuesMath.aggregate(rows.map(row => samples.get(row)?.[field]), op);
+    const meta = gridFields[view].find(item => item.id === field);
+    const loading = fetching || (view === "positions" && posLoading);
+    const incomplete = feedTruncated || (view === "positions" && (posTruncated || posError || posFailedWallets.length));
+    let value = result.value;
+    if(loading && !rows.length) value = null;
+    const format = op === "count" ? {maximumFractionDigits:0}
+      : meta.format === "money" ? {style:"currency",currency:"USD"}
+      : meta.format === "price" ? {minimumFractionDigits:3,maximumFractionDigits:3} : {maximumFractionDigits:4};
+    const text = value == null ? "—" : new Intl.NumberFormat("en-US", format).format(value);
+    const notes = [];
+    if(result.missing) notes.push(result.missing + " unavailable");
+    if(result.pending) notes.push(result.pending + " loading");
+    if(loading && !result.pending) notes.push("Loading");
+    if(incomplete) notes.push("Incomplete history");
+    const title = result.count + " of " + result.total + " values included" + (notes.length ? " · " + notes.join(" · ") : "");
+    const tone = meta.signed && op !== "count" && value ? (value > 0 ? " pos" : " neg") : "";
+    return {html:'<span class="grid-op">'+esc(op)+'</span><span class="grid-number'+tone+'">'+esc(text)+'</span>'
+      + (notes.length ? '<span class="grid-partial" aria-label="'+esc(notes.join(" · "))+'">'+(loading || result.pending ? "…" : "*")+'</span>' : ""), title};
+  }
+  function gridSummaryRow(view, rows, samples, node, depth=0){
+    const cfg = view === "positions" ? posCols : actCols;
+    const config = valuePanels[view].getConfig();
+    const ops = new Map(config.map(item => [item.field, item.op]));
+    const visible = cfg.order.filter(index => !cfg.hidden.has(index));
+    const labelColumn = visible.find(index => !ops.has(valueFieldForColumn(cfg, index))) ?? visible[0];
+    const collapsed = node && gridState[view].collapsed.has(node.key);
+    const label = node ? cfg.colNames[Number(node.field)] + ": " + node.label : "Total";
+    const count = rows.length.toLocaleString();
+    const labelHtml = node
+      ? '<button type="button" class="grid-group-toggle" data-group-key="'+esc(node.key)+'" aria-expanded="'+!collapsed+'" title="'+esc(label)+'" style="--group-depth:'+depth+'"><span aria-hidden="true">'+(collapsed ? "▸" : "▾")+'</span><span class="grid-group-label">'+esc(label)+'</span><span class="grid-group-count">'+count+'</span></button>'
+      : '<span class="grid-total-label" title="All loaded rows matching the current filters">Total <span class="grid-group-count">'+count+'</span></span>';
+    const cells = cfg.order.map(index => {
+      const field = valueFieldForColumn(cfg, index), op = ops.get(field);
+      const value = op ? gridAggregateCell(view, rows, field, op, samples) : null;
+      return '<td'+(value ? ' class="num" data-value-field="'+field+'" title="'+esc(value.title)+'"' : '')+'>'
+        + (index === labelColumn ? labelHtml : "") + (value ? value.html : "") + '</td>';
+    }).join("");
+    return '<tr class="'+(node ? 'grid-group-row' : 'grid-total-row')+'"'+(node ? ' data-group-key="'+esc(node.key)+'"' : '')+'>'+cells+'</tr>';
+  }
+  function refreshValues(){
+    if(!valuePanels) return;
+    const view = $("tabPositions").classList.contains("on") ? "positions" : "activity";
+    $("activityValues").hidden = view !== "activity";
+    $("positionValues").hidden = view !== "positions";
+    const positions = view === "positions";
+    if(!$(positions ? "posWrap" : "tableWrap").classList.contains("active")) return;
+    const rows = positions ? visiblePositions() : filteredRecords;
+    const data = positions ? ValuesData.positions(rows, valuesHelpers) : ValuesData.activity(rows, valuesHelpers);
+    const samples = new Map(rows.map((row, i) => [row, data[i]]));
+    const config = valuePanels[view].getConfig(), groups = valuePanels[view].getGroups();
+    const footer = $(positions ? "positionTotals" : "activityTotals");
+    footer.hidden = !config.length;
+    footer.innerHTML = config.length ? gridSummaryRow(view, rows, samples) : "";
+    if(!groups.length) return;
+    const tree = ValuesGroups.build(rows, groups, (row, field) => gridGroupValue(view, row, field));
+    const shown = positions ? posRendered : filteredRecords.slice(0, renderedCount);
+    // History-only rows are reconstructed on each read; identify positions by key.
+    const rowIdentity = row => positions ? positionGroupKey(row) : row;
+    const indexes = new Map(shown.map((row, i) => [rowIdentity(row), i]));
+    const nodes = new Map(), entries = [], state = gridState[view];
+    function visit(list, depth){
+      for(const node of list){
+        if(!node.rows.some(row => indexes.has(rowIdentity(row)))) continue;
+        nodes.set(node.key, node);
+        entries.push({node, depth});
+        if(state.collapsed.has(node.key)) continue;
+        if(node.children.length) visit(node.children, depth + 1);
+        else for(const row of node.rows) if(indexes.has(rowIdentity(row))) entries.push({row, index:indexes.get(rowIdentity(row))});
+      }
+    }
+    visit(tree, 0);
+    const cfg = positions ? posCols : actCols;
+    const signature = JSON.stringify([groups, cfg.order, [...cfg.hidden], config, entries.map(entry =>
+      entry.node ? [entry.node.key, entry.node.rows.length, state.collapsed.has(entry.node.key)] : entry.index)]);
+    const body = $(positions ? "posBody" : "tableBody");
+    if(signature !== state.signature){
+      state.signature = signature;
+      body.innerHTML = entries.map(entry => entry.node ? gridSummaryRow(view, entry.node.rows, samples, entry.node, entry.depth)
+        : positions ? posRowHtml(entry.row, entry.index) : rowHtml(entry.row, entry.index)).join("");
+      if(positions && expandedPos.size) [...body.querySelectorAll("tr.pos-row")].forEach(tr => {
+        const position = posRendered[Number(tr.dataset.pi)];
+        if(position && expandedPos.has(posKey(position))) expandPosRow(tr, position);
+      });
+    }else{
+      body.querySelectorAll(".grid-group-row").forEach(tr => {
+        const node = nodes.get(tr.dataset.groupKey);
+        if(!node) return;
+        tr.querySelectorAll("[data-value-field]").forEach(cell => {
+          const field = cell.dataset.valueField, op = config.find(item => item.field === field)?.op;
+          if(!op) return;
+          const value = gridAggregateCell(view, node.rows, field, op, samples);
+          // Keep a focused group toggle intact when every visible column is numeric.
+          cell.querySelectorAll(".grid-op,.grid-number,.grid-partial").forEach(el => el.remove());
+          cell.insertAdjacentHTML("beforeend", value.html);
+          cell.title = value.title;
+        });
+      });
+    }
+  }
+  const valuesHelpers = {computeFeeFor, feeUnavailable, positionFeeEstimate, positionTradesFor};
+  const gridFields = {
+    activity: [
+      {id:"size", label:"Size", format:"number"}, {id:"price", label:"Price", format:"price", defaultOp:"avg"},
+      {id:"usdcSize", label:"USDC", format:"money"}, {id:"feeEstimate", label:"Fee (est.)", format:"money"}
+    ],
+    positions: [
+      {id:"size", label:"Shares", format:"number"}, {id:"avgPrice", label:"Avg price", format:"price", defaultOp:"avg"},
+      {id:"curPrice", label:"Cur price", format:"price", defaultOp:"avg"}, {id:"initialValue", label:"Cost", format:"money"},
+      {id:"value", label:"Value", format:"money"}, {id:"cashPnl", label:"PnL", format:"money", signed:true},
+      {id:"feeEstimate", label:"Fees (est.)", format:"money"}
+    ]
+  };
+  function gridConfigChanged(view, config){
+    const cfg = view === "positions" ? posCols : actCols;
+    // A newly selected value needs its column visible to show the result.
+    for(const item of config){
+      const index = cfg.order.find(index => valueFieldForColumn(cfg, index) === item.field);
+      if(index != null) cfg.hidden.delete(index);
+    }
+    gridState[view].signature = null;
+    clearDropMarks(); dragPos = null;
+    Object.values(valuePanels).forEach(panel => panel.setDragColumn(null));
+    cfgApplyHidden(cfg); buildColsList();
+    if(view === "positions"){ posRenderKey = null; renderPositions(); }
+    else renderTableChunk(true);
+  }
+  valuePanels = Object.fromEntries(["activity", "positions"].map(view => {
+    const cfg = view === "positions" ? posCols : actCols;
+    return [view, ValuesPanel.create({
+      container: $(view === "positions" ? "positionValues" : "activityValues"),
+      storageKey: "pmac_"+view+"_grid_values", groupStorageKey: "pmac_"+view+"_row_groups",
+      fields: gridFields[view], groupFields: cfg.colNames.map((label, index) => ({id:String(index),label:label.replace(/\s*\((GMT\+8|ET)\)$/, "")})),
+      defaults: view === "positions" ? [{field:"cashPnl",op:"sum"},{field:"feeEstimate",op:"sum"}]
+        : [{field:"usdcSize",op:"sum"},{field:"feeEstimate",op:"sum"}],
+      onConfigChange: config => gridConfigChanged(view, config)
+    })];
+  }));
+  for(const [id, view] of [["tableBody","activity"],["posBody","positions"]]){
+    $(id).addEventListener("click", event => {
+      const button = event.target.closest(".grid-group-toggle");
+      if(!button) return;
+      const key = button.dataset.groupKey, collapsed = gridState[view].collapsed;
+      if(collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+      refreshValues();
+      [...$(id).querySelectorAll(".grid-group-toggle")].find(el => el.dataset.groupKey === key)?.focus({preventScroll:true});
+    });
+  }
+  refreshValues();
 
   // active-filter chip for badge-click market filters
   function renderChips(){

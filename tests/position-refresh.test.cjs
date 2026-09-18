@@ -271,12 +271,15 @@ test('the visible shares, average and cost cells refresh even when the midpoint 
   context.$('posBody').children = [{dataset: {pi: '0'}, cells, classList: {contains: kind => kind === 'pos-row', toggle() {}}}];
   context.tweenCell = (cell, old, value, format) => { cell.innerHTML = format(value); };
   context.tickArrow = () => '';
+  let valuesRefreshes = 0;
+  context.refreshValues = () => { valuesRefreshes++; };
   vm.runInContext(productionFunction('applyLivePrices'), context);
   await context.pollLiveHoldings();
   assert.equal(cells[context.posCols.order.indexOf(3)].innerHTML, '1,000');
   assert.equal(cells[context.posCols.order.indexOf(4)].innerHTML, '0.700');
   assert.equal(cells[context.posCols.order.indexOf(6)].innerHTML, '$700.00');
   assert.equal(cells[context.posCols.order.indexOf(7)].innerHTML, '$605.00');
+  assert.equal(valuesRefreshes, 1, 'fresh holdings also refresh the Values panel');
 });
 
 test('a failed midpoint request still applies fresh holdings and reports an unavailable live price', async () => {

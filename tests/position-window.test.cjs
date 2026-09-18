@@ -188,12 +188,15 @@ test('snapshot and activity rows without asset IDs match by wallet, market and o
 
 test('progressively arriving trade groups refresh the positions view with an unchanged snapshot count', () => {
   const {context} = harness({params: {start: '100'}});
+  let valuesRefreshes = 0;
   Object.assign(context, {
     posRunSeq: 1, posLoading: false, posLoaded: true, posError: null,
     posRenderKey: null, posRendered: [], POS_VIEW_CAP: 1000,
+    gridState: {positions:{signature:null}},
     expandedPos: new Set(),
     document: {querySelectorAll: () => []},
     setPosNote() {}, buildPosNote: () => '', hideTooltip() {}, loadFeesFor() {},
+    refreshValues() { valuesRefreshes++; },
     posRowHtml: p => `<tr>${p.title}</tr>`,
   });
   vm.runInContext(productionFunction('renderPositions'), context);
@@ -204,6 +207,7 @@ test('progressively arriving trade groups refresh the positions view with an unc
   assert.equal(context.posRendered.length, 1);
   assert.ok(context.posRendered[0].isActivityOnly);
   assert.match(context.$('posBody').innerHTML, /MOUZ vs NRG/);
+  assert.equal(valuesRefreshes, 2, 'new trade groups also refresh the Values panel');
 });
 
 test('closed snapshots use sequential 50-row timestamp pages, stop on a short page and deduplicate overlap', async () => {
