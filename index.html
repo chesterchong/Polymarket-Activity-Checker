@@ -40,16 +40,16 @@
 }
 *{box-sizing:border-box; margin:0; padding:0;}
 
-/* slim, theme-aware scrollbars */
-*{scrollbar-width:thin; scrollbar-color:var(--border) transparent;} /* Firefox */
+/* Keep scrollbar colors stable so theme changes do not flash native overlays. */
+*{scrollbar-width:thin; scrollbar-color:rgba(115,122,130,.55) transparent;}
 ::-webkit-scrollbar{width:10px; height:10px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{
-  background:var(--border); border-radius:999px;
+  background:rgba(115,122,130,.55); border-radius:999px;
   border:3px solid transparent; background-clip:padding-box; /* floating 4px pill */
   min-width:40px; min-height:40px;
 }
-::-webkit-scrollbar-thumb:hover{background:var(--muted-foreground); border:3px solid transparent; background-clip:padding-box;}
+::-webkit-scrollbar-thumb:hover{background:rgba(115,122,130,.8); border:3px solid transparent; background-clip:padding-box;}
 ::-webkit-scrollbar-corner{background:transparent;}
 html,body{height:100%;}
 body{
@@ -486,10 +486,10 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 
 @media (max-width:640px){ .stat .value{font-size:15px;} input[type="search"]{width:130px;} }
 </style>
-<link rel="stylesheet" href="assets/winter.css">
+<link rel="stylesheet" href="assets/winter.css?v=3">
 <link rel="preload" as="image" href="assets/winter-window.jpg">
 <script defer src="assets/winter.js"></script>
-<link rel="stylesheet" href="assets/date-range.css?v=2">
+<link rel="stylesheet" href="assets/date-range.css?v=3">
 <link rel="stylesheet" href="assets/values-panel.css">
 <link rel="stylesheet" href="assets/grid-values.css">
 </head>

@@ -1,18 +1,28 @@
 /* A quiet winter street behind the dashboard's frosted glass. */
 :root{
-  --background:rgba(231,240,250,.7);
-  --foreground:#15263a;
-  --card:rgba(246,250,255,.95);
-  --muted:rgba(219,231,244,.88);
-  --muted-foreground:#53657a;
-  --border:rgba(78,105,137,.2);
-  --input-bg:rgba(245,249,255,.38);
-  --input-focus-bg:rgba(218,232,249,.8);
-  --winter-base:#d4e0eb;
-  --winter-wash:rgba(219,233,245,.36);
-  --winter-shadow:0 12px 40px rgba(13,31,50,.1),inset 0 1px 0 rgba(255,255,255,.5);
+  --background:rgba(196,184,166,.72);
+  --foreground:#332e28;
+  --card:rgba(219,211,197,.97);
+  --muted:rgba(198,186,168,.9);
+  --muted-foreground:#5b5349;
+  --primary:#756044;
+  --border:rgba(91,75,55,.24);
+  --input-bg:rgba(210,199,180,.38);
+  --input-focus-bg:rgba(196,183,161,.55);
+  --destructive:#a13e35; --success:#286347; --redeemable:#365f7b;
+  --badge-buy-bg:#d0ddcc; --badge-buy-fg:#286347;
+  --badge-sell-bg:#e5c9bd; --badge-sell-fg:#a13e35;
+  --badge-neutral-bg:#cfc3af; --badge-neutral-fg:#554d42;
+  --winter-base:#b8ac9a;
+  --winter-wash:rgba(100,80,58,.14);
+  --winter-shadow:0 12px 40px rgba(47,36,23,.14),inset 0 1px 0 rgba(239,226,205,.28);
 }
 .dark{
+  --primary:#165dfc;
+  --destructive:#ff6568; --success:#34d399; --redeemable:#93c5fd;
+  --badge-buy-bg:rgba(13,148,85,.16); --badge-buy-fg:#34d399;
+  --badge-sell-bg:rgba(223,34,37,.16); --badge-sell-fg:#ff6568;
+  --badge-neutral-bg:#1f2023; --badge-neutral-fg:#a1a1aa;
   --background:rgba(10,20,32,.66);
   --foreground:#f0f5fc;
   --card:rgba(17,29,44,.95);
@@ -32,7 +42,9 @@ body{background:var(--winter-base); isolation:isolate;}
 .winter-snow{position:absolute; inset:0; width:100%; height:100%; opacity:.72; filter:blur(.35px);}
 .winter-frost{position:absolute; inset:0; background:radial-gradient(ellipse at 0 12%,rgba(222,237,249,.22),transparent 43%),radial-gradient(ellipse at 100% 90%,rgba(215,233,248,.18),transparent 37%),var(--winter-wash); box-shadow:inset 0 0 95px rgba(215,231,246,.12);}
 .page{isolation:isolate;}
-.header .sub{color:#263d56;}
+.header .sub{color:var(--muted-foreground);}
+:root:not(.dark) .header{color:#f4eee4; text-shadow:0 1px 4px rgba(15,20,27,.8);}
+:root:not(.dark) .header .sub{color:#eee5d8;}
 .dark .header .sub{color:#d0dced; text-shadow:0 1px 4px rgba(3,12,23,.25);}
 .card,.summary,.results-bar,.side-panel,.side-tabs{
   -webkit-backdrop-filter:blur(18px) saturate(115%);
@@ -49,4 +61,12 @@ body{background:var(--winter-base); isolation:isolate;}
 @media(max-width:640px){
   .winter-street{background-position:53% center;}
   .card,.summary,.results-bar,.side-panel,.side-tabs{-webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);}
+}
+
+/* Let large surfaces settle gently instead of jumping to a bright new theme. */
+.card,.summary,.results-bar,.table-wrap,.side-tabs{
+  transition:background-color .22s ease,border-color .22s ease,color .22s ease;
+}
+@media(prefers-reduced-motion:reduce){
+  body,.card,.summary,.results-bar,.table-wrap,.side-tabs{transition:none;}
 }
