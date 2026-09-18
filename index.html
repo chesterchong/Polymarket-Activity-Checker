@@ -654,7 +654,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <table>
         <thead>
           <tr>
-            <th class="sortable" id="thTime" title="Sort by date">Time (ET) <span id="sortArrow">▼</span></th><th>Wallet</th><th>Type</th><th>Market</th><th>Outcome</th>
+            <th class="sortable" id="thTime" title="Sort by date">Time (GMT+8) <span id="sortArrow">▼</span></th><th>Wallet</th><th>Type</th><th>Market</th><th>Outcome</th>
             <th>Side</th><th class="num">Size</th><th class="num">Price</th><th class="num">USDC</th><th class="num" title="Estimated taker fee — makers pay no fee">Fee (est.)</th><th>Tx</th>
           </tr>
         </thead>
@@ -668,7 +668,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       <table>
         <thead>
           <tr>
-            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num" title="Cost basis of the position (USDC)">Cost</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th><th class="num" title="Estimated taker fees for this position’s trades in the selected search window and date range; makers pay no fee">Fees (est.)</th><th id="thMarketTime" title="Scheduled market or event date and time"><span id="marketTimeLabel">Market date/time (ET)</span></th>
+            <th>Wallet</th><th>Market</th><th>Outcome</th><th class="num">Shares</th><th class="num">Avg price</th><th class="num">Cur price</th><th class="num" title="Cost basis of the position (USDC)">Cost</th><th class="num">Value</th><th class="num">PnL</th><th>End date</th><th class="num" title="Estimated taker fees for this position’s trades in the selected search window and date range; makers pay no fee">Fees (est.)</th><th id="thMarketTime" title="Scheduled market or event date and time"><span id="marketTimeLabel">Market time (GMT+8)</span></th>
           </tr>
         </thead>
         <tbody id="posBody"></tbody>
@@ -777,8 +777,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // convention, DST-aware) or GMT+8. The same zone governs the date filter.
   const TZ_KEY = "pmac_tz";
   const TZ_IANA = {"ET": "America/New_York", "GMT+8": "Asia/Singapore"};
-  let tzSel = "ET";
-  try{ if(localStorage.getItem(TZ_KEY) === "GMT+8") tzSel = "GMT+8"; }catch(e){}
+  let tzSel = "GMT+8";
+  try{
+    const savedTz = localStorage.getItem(TZ_KEY);
+    if(Object.prototype.hasOwnProperty.call(TZ_IANA, savedTz)) tzSel = savedTz;
+  }catch(e){}
   const fmtTime = ts => {
     const d = new Date(ts*1000);
     return d.toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",
@@ -1637,7 +1640,29 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   function positionMarketTimeValue(p){
     return positionMarketTimes(p).map(d => d.value).join(" | ");
   }
+  function sortPositionsByMarketTime(rows){
+    const times = new Map(rows.map(p => {
+      const dates = positionMarketTimes(p).map(d => d.dateOnly
+        ? zonedDayBound(d.value, false) : Date.parse(d.value));
+      return [p, dates.length ? Math.max(...dates) : null];
+    }));
+    return rows.sort((a,b) => {
+      const first = times.get(a), second = times.get(b);
+      if(first === second) return 0;
+      if(first === null) return 1;
+      if(second === null) return -1;
+      return second - first;
+    });
+  }
   function refreshMarketTimeCells(){
+    if($("posWrap").classList.contains("active")){
+      const rows = visiblePositions().slice(0, POS_VIEW_CAP);
+      if(rows.length !== posRendered.length || rows.some((p,i) => positionGroupKey(p) !== positionGroupKey(posRendered[i]))){
+        posRenderKey = null;
+        renderPositions();
+        return;
+      }
+    }
     document.querySelectorAll("#posBody .pos-market-time").forEach(td => {
       const p = posRendered[Number(td.dataset.pi)];
       if(p){ td.textContent = positionMarketTimeText(p); td.title = positionMarketTimeTitle(p); }
@@ -2183,13 +2208,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     return rows;
   }
   function visiblePositions(){
-    let rows = basePositions();
-    rows = rows.filter(matchesPositionStatus);
-    // redeemed/sold rows have no current value — payout / cost basis is the comparable number
-    const valOf = p => p.isRedeemed ? (Number(p.payout)||0)
-      : p.isClosed ? (Number(p.initialValue)||0) : (Number(p.currentValue)||0);
-    rows.sort((a,b) => valOf(b) - valOf(a));
-    return rows;
+    return sortPositionsByMarketTime(basePositions().filter(matchesPositionStatus));
   }
   // status semantics:
   //   loss        — resolved against the wallet, OR valued at $0 (regardless of flags)
@@ -2288,7 +2307,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       el.textContent = (catCounts[el.parentElement.dataset.cat] || 0).toLocaleString());
     const rows = visiblePositions();
     loadFeesFor(rows.flatMap(positionTradesFor));
-    loadMarketTimesFor(rows.slice(0, POS_VIEW_CAP));
+    // Sorting needs schedules for every matching row before applying the display cap.
+    loadMarketTimesFor(rows);
     setPosNote(buildPosNote(rows, q));
     posRendered = rows.slice(0, POS_VIEW_CAP); // tooltip lookups index this
     hideTooltip(); // rows are being replaced under any open tooltip
@@ -2313,7 +2333,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       const unavailable = rows.filter(p => p.isActivityOnly).length;
       if(unavailable) note = unavailable + " position snapshots unavailable (History)";
       if(posTruncated) note += (note ? " · " : "") + "Limited to the first " + (POS_MAX_PAGES*500).toLocaleString() + " positions per wallet";
-      if(rows.length > POS_VIEW_CAP) note += (note ? " · " : "") + "Showing the top " + POS_VIEW_CAP.toLocaleString() + " by value — narrow the search or download the CSV for all";
+      if(rows.length > POS_VIEW_CAP) note += (note ? " · " : "") + "Showing the latest " + POS_VIEW_CAP.toLocaleString() + " by market time — narrow the search or download the CSV for all";
     }
     if(posLoaded && posFailedWallets.length)
       note += (note ? " · " : "") + "failed for " + posFailedWallets.map(short).join(", ");
@@ -2759,11 +2779,11 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   setInterval(pollBalance, LIVE_MS);
 
   function positionsCsv(rows){
-    const cols = ["proxyWallet","title","marketDateTime","outcome","status","size","avgPrice","curPrice","initialValue","feeEstimate","currentValue","payout","cashPnl","percentPnl","realizedPnl","endDate","conditionId"];
+    const cols = ["marketTime","proxyWallet","title","outcome","status","size","avgPrice","curPrice","initialValue","feeEstimate","currentValue","payout","cashPnl","percentPnl","realizedPnl","endDate","conditionId"];
     // csvCell carries the spreadsheet formula-injection guard used by the activity CSV
     return cols.join(",") + "\n" + rows.map(p =>
       cols.map(c => {
-        if(c === "marketDateTime") return csvCell(positionMarketTimeValue(p));
+        if(c === "marketTime") return csvCell(positionMarketTimeValue(p));
         if(c === "feeEstimate"){
           const fee = positionFeeEstimate(p);
           return csvCell(fee === undefined ? "" : fee.toFixed(6));
@@ -3241,8 +3261,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.tz === tzSel));
     $("thTime").innerHTML = "Time (" + esc(tzSel) + ') <span id="sortArrow">' + (sortDir === "desc" ? "▼" : "▲") + "</span>";
     actCols.colNames[0] = "Time (" + tzSel + ")";
-    $("marketTimeLabel").textContent = "Market date/time (" + tzSel + ")";
-    posCols.colNames[11] = "Market date/time (" + tzSel + ")";
+    $("marketTimeLabel").textContent = "Market time (" + tzSel + ")";
+    posCols.colNames[11] = "Market time (" + tzSel + ")";
     buildColsList();
   }
   document.querySelectorAll("#tzSeg .seg-btn").forEach(b => b.addEventListener("click", ()=>{
@@ -3268,13 +3288,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   // view is active. Each view has its own config: order maps display position ->
   // original column index; the header row, body cells, and nth-child hiding CSS
   // all follow it, persisted per view.
-  function makeTableCfg(colNames, wrapId, orderKey, hiddenKey, onChange, defaultOrder = colNames.map((_, i) => i)){
+  function makeTableCfg(colNames, wrapId, orderKey, hiddenKey, onChange, defaultOrder = colNames.map((_, i) => i), defaultHidden = []){
     const headRow = document.querySelector("#" + wrapId + " thead tr");
     const cfg = {
-      colNames, wrapId, orderKey, hiddenKey, onChange, defaultOrder,
+      colNames, wrapId, orderKey, hiddenKey, onChange, defaultOrder, defaultHidden,
       headRow, origThs: Array.from(headRow.children),
       order: defaultOrder.slice(),
-      hidden: new Set(),
+      hidden: new Set(defaultHidden),
       style: document.createElement("style")
     };
     document.head.appendChild(cfg.style);
@@ -3283,11 +3303,14 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       if(Array.isArray(saved) && saved.length === colNames.length
         && [...saved].sort((a,b)=>a-b).every((v,i)=>v===i)) cfg.order = saved;
     }catch(e){}
-    try{ cfg.hidden = new Set((JSON.parse(localStorage.getItem(hiddenKey))||[]).filter(i => i>=0 && i<colNames.length)); }catch(e){}
+    try{
+      const saved = JSON.parse(localStorage.getItem(hiddenKey));
+      if(Array.isArray(saved)) cfg.hidden = new Set(saved.filter(i => Number.isInteger(i) && i>=0 && i<colNames.length));
+    }catch(e){}
     return cfg;
   }
   const actCols = makeTableCfg(
-    ["Time (ET)","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"],
+    ["Time (GMT+8)","Wallet","Type","Market","Outcome","Side","Size","Price","USDC","Fee (est.)","Tx"],
     "tableWrap", "pmac_col_order", "pmac_hidden_cols",
     () => { if($("tableWrap").classList.contains("active")) renderTableChunk(true); });
   // Insert Cost before Value while retaining existing column order/visibility.
@@ -3323,9 +3346,23 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     }
   }catch(e){}
   const posCols = makeTableCfg(
-    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Cost","Value","PnL","End date","Fees (est.)","Market date/time (ET)"],
+    ["Wallet","Market","Outcome","Shares","Avg price","Cur price","Cost","Value","PnL","End date","Fees (est.)","Market time (GMT+8)"],
     "posWrap", "pmac_pos_col_order", "pmac_pos_hidden_cols",
-    () => { posRenderKey = null; renderPositions(); }, [0,1,11,2,3,4,5,6,10,7,8,9]);
+    () => { posRenderKey = null; renderPositions(); }, [11,0,1,2,3,4,5,6,10,7,8,9], [0]);
+  function migratePositionDisplayDefaults(cfg){
+    const key = "pmac_pos_display_defaults_v1";
+    try{ if(localStorage.getItem(key) === "1") return; }catch(e){}
+    cfg.order = [11, ...cfg.order.filter(i => i !== 11)];
+    cfg.hidden.add(0);
+    cfg.hidden.delete(11);
+    try{
+      localStorage.setItem(cfg.orderKey, JSON.stringify(cfg.order));
+      localStorage.setItem(cfg.hiddenKey, JSON.stringify([...cfg.hidden]));
+      localStorage.setItem(key, "1");
+    }catch(e){}
+  }
+  // Apply these defaults once to existing browsers, then retain later customizations.
+  migratePositionDisplayDefaults(posCols);
   const activeColsCfg = () => $("tabPositions").classList.contains("on") ? posCols : actCols;
   function updateColsDot(){
     $("sideTab").classList.toggle("has-hidden", activeColsCfg().hidden.size > 0);
@@ -3362,7 +3399,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   $("colsReset").addEventListener("click", ()=>{
     const cfg = activeColsCfg();
     cfg.order = cfg.defaultOrder.slice();
-    cfg.hidden = new Set();
+    cfg.hidden = new Set(cfg.defaultHidden);
     cfgApplyOrder(cfg);
   });
   // drag one row of the list onto another to reorder (top/bottom half = above/below)
@@ -3645,7 +3682,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       $("dlBtn").disabled = true;
       try{
         await loadMarketTimesFor(rows);
-        if(myRun === posRunSeq) download("polymarket-positions.csv","text/csv",positionsCsv(rows));
+        if(myRun === posRunSeq) download("polymarket-positions.csv","text/csv",positionsCsv(sortPositionsByMarketTime(rows)));
       }finally{ $("dlBtn").disabled = false; }
     }
     else

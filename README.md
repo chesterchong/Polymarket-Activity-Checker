@@ -23,7 +23,7 @@ To remember an address or a list of addresses, click the bookmark button beside 
 | Field | Meaning |
 | --- | --- |
 | Shares | Number of shares reported for the position. |
-| Market date/time | Scheduled game or event time from market metadata, displayed in the selected ET or GMT+8 timezone. Dates without a published time remain date-only; unavailable schedules show an em dash. Combos with different leg schedules show “Multiple times” with details on hover. CSV exports use ISO timestamps or date-only values. |
+| Market time | Scheduled game or event time from market metadata, displayed in the selected timezone (GMT+8 by default). Dates without a published time remain date-only; unavailable schedules show an em dash. Combos with different leg schedules show “Multiple times” with details on hover. CSV exports use ISO timestamps or date-only values. |
 | Avg price | Average entry price per share. |
 | Cur price | Current reported or estimated price per share. |
 | Cost | Position cost basis in USDC, using the supplied `initialValue`. Combo positions use the reported entry cost. An em dash means the cost is unavailable. |
@@ -40,9 +40,9 @@ The window determines which positions appear and which trades contribute fees. P
 
 ## Display and sharing
 
-- Open **Columns** to hide or reorder columns separately for activity and positions. Use **Reset columns** to restore defaults.
+- Active Position starts with **Market time**, newest first, and **Wallet** hidden. Unknown times appear last; combos sort by their latest leg. Open **Columns** to change the layout or **Reset columns** to restore defaults.
 - Drag a column header's edge to resize it; double-click the edge to reset widths.
-- Choose **ET** or **GMT+8** in the side panel for activity timestamps, market date/time, and date filtering.
+- **GMT+8** is the default timezone. Choose **ET** or **GMT+8** in the side panel for timestamps and date filtering; your choice is saved.
 - Click **Snapshot** to copy the visible results table as an image. If image clipboard access is unavailable, the app downloads a PNG instead.
 - Use the theme button to switch between light and dark mode.
 - Use **Clear** beside **Check activity** to empty the address field. Saved bookmarks and current results stay available.

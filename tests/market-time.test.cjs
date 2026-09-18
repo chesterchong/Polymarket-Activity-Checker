@@ -30,7 +30,8 @@ function harness(options = {}) {
   });
   const names = ['parseMarketTime', 'extractMarketTime', 'cacheMarketTime', 'marketTimeIds',
     'positionMarketTimes', 'formatMarketTime', 'positionMarketTimeText', 'positionMarketTimeTitle',
-    'positionMarketTimeValue', 'fetchWithRetry', 'loadMarketTimesFor'];
+    'positionMarketTimeValue', 'sortPositionsByMarketTime', 'zonedMidnight', 'zonedDayBound',
+    'fetchWithRetry', 'loadMarketTimesFor'];
   vm.runInContext(names.map(productionFunction).join('\n'), context, {filename: 'index.html extracted market time functions'});
   return {context, calls, advance: ms => { now += ms; }, refreshes: () => refreshes};
 }
@@ -184,6 +185,10 @@ test('large lookups batch twenty unique markets without per-row requests', async
 
 test('late metadata refresh updates currently rendered positions, not rows captured before a filter change', () => {
   const {context: c} = harness();
+  c.$ = () => ({classList: {contains: () => true}});
+  c.POS_VIEW_CAP = 1000;
+  c.visiblePositions = () => c.posRendered;
+  c.positionGroupKey = p => p.conditionId;
   const td = {dataset: {pi: '0'}, textContent: '', title: ''};
   c.document = {querySelectorAll: selector => {
     assert.equal(selector, '#posBody .pos-market-time');
@@ -196,4 +201,59 @@ test('late metadata refresh updates currently rendered positions, not rows captu
   c.refreshMarketTimeCells();
   assert.match(td.textContent, /^17 Sept? 2026, 07:00$/);
   assert.match(td.title, /Scheduled game time: .*07:00/);
+});
+
+test('positions sort by newest scheduled market time regardless of value, with unknown times last and ties stable', () => {
+  const {context: c} = harness();
+  const rows = [
+    {title:'unknown', currentValue:9000},
+    {title:'older', gameStartTime:'2026-09-16T10:00:00Z', currentValue:8000},
+    {title:'newer A', gameStartTime:'2026-09-17T10:00:00Z', currentValue:1},
+    {title:'newer B', gameStartTime:'2026-09-17T18:00:00+08:00', currentValue:2},
+    {title:'another unknown', endDate:'2026-09-19T00:00:00Z'},
+  ];
+  assert.deepEqual(Array.from(c.sortPositionsByMarketTime(rows), p => p.title),
+    ['newer A','newer B','older','unknown','another unknown']);
+});
+
+test('date-only schedules sort within their displayed calendar day and combos use their latest leg', () => {
+  const {context: c} = harness();
+  c.tzSel = 'GMT+8';
+  c.cacheMarketTime({conditionId:'leg1', gameStartTime:'2026-09-16T15:00:00Z'});
+  c.cacheMarketTime({conditionId:'leg2', gameStartTime:'2026-09-17T12:00:00Z'});
+  const rows = [
+    {title:'previous evening', gameStartTime:'2026-09-16T15:59:00Z'},
+    {title:'date only', events:[{eventDate:'2026-09-17'}]},
+    {title:'morning', gameStartTime:'2026-09-17T01:00:00Z'},
+    {title:'combo', isCombo:true, legs:[{leg_condition_id:'leg1'}, {leg_condition_id:'leg2'}]},
+  ];
+  assert.deepEqual(Array.from(c.sortPositionsByMarketTime(rows), p => p.title),
+    ['combo','morning','date only','previous evening']);
+  assert.equal(c.positionMarketTimeText(rows[2]), '2026-09-17');
+});
+
+test('arriving market metadata reorders the currently filtered rows and lets newer rows enter the display cap', () => {
+  const {context: c} = harness();
+  const older = {conditionId:'older'}, newer = {conditionId:'newer'};
+  c.$ = () => ({classList: {contains: () => true}});
+  c.POS_VIEW_CAP = 1;
+  c.positionGroupKey = p => p.conditionId;
+  c.posRendered = [older];
+  c.visiblePositions = () => c.sortPositionsByMarketTime([older, newer]);
+  c.posRenderKey = 'cached render';
+  let renders = 0;
+  c.renderPositions = () => {
+    assert.equal(c.posRenderKey, null);
+    renders++;
+    c.posRendered = c.visiblePositions().slice(0, c.POS_VIEW_CAP);
+  };
+  c.cacheMarketTime({conditionId:'older', gameStartTime:'2026-09-16T10:00:00Z'});
+  c.cacheMarketTime({conditionId:'newer', gameStartTime:'2026-09-17T10:00:00Z'});
+  vm.runInContext(productionFunction('refreshMarketTimeCells'), c);
+  c.refreshMarketTimeCells();
+  assert.equal(renders, 1);
+  assert.equal(c.posRendered[0], newer);
+  c.document = {querySelectorAll: () => []};
+  c.refreshMarketTimeCells();
+  assert.equal(renders, 1, 'unchanged ordering must not repeatedly rebuild the table');
 });
