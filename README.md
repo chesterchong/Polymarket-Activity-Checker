@@ -12,8 +12,7 @@ A browser-based tool for viewing public Polymarket wallet activity, positions, b
 4. Select a results tab:
    - **Activity** shows trades, funding transfers, redemptions, rewards, and other supported activity. Filter by type, buy/sell side, category, date, or market text.
    - **Active Position** shows markets with activity in the searched time window, grouped by wallet and outcome/token. Use **Open** for open positions and winnings not yet redeemed, or **Close** for lost, redeemed, and fully sold positions. Select neither or both to show all positions (the default). **Single** and **Combo** filter their type. Rows marked **History** have activity but no position snapshot; they remain in the unfiltered view with unavailable balances and PnL shown as an em dash. Click a position's market cell to expand its details.
-   - **Json** shows the filtered activity records as formatted JSON.
-5. Click **Export** to download the current filtered activity or positions as CSV, or the Json view as JSON. Exports include all loaded matching records, even when the screen shows only a subset.
+5. Click **Export** to download the current filtered activity or positions as CSV. Exports include all loaded matching records, even when the screen shows only a subset.
 
 No wallet connection, private key, seed phrase, or transaction signing is required. The app reads public data and does not place trades.
 
@@ -46,6 +45,7 @@ The window determines which positions appear and which trades contribute fees. P
 - Choose **ET** or **GMT+8** in the side panel for activity timestamps, market date/time, and date filtering.
 - Click **Snapshot** to copy the visible results table as an image. If image clipboard access is unavailable, the app downloads a PNG instead.
 - Use the theme button to switch between light and dark mode.
+- Use **Clear** beside **Check activity** to empty the address field. Saved bookmarks and current results stay available.
 - Use **Reset filters** to clear result filters, or **Check activity** again to reload data.
 
 ## Data and limitations

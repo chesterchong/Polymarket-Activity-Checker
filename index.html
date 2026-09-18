@@ -27,7 +27,6 @@
   --badge-buy-bg:#e8f7ef; --badge-buy-fg:#0d9455;
   --badge-sell-bg:#fdecec; --badge-sell-fg:#df2225;
   --badge-neutral-bg:#f4f4f5; --badge-neutral-fg:#52525b;
-  --json-key:#165dfc; --json-str:#0d9455; --json-num:#b45309; --json-bool:#7c3aed; --json-null:#737373;
 }
 .dark{
   --background:#0a0b0d; --foreground:#fafafa;
@@ -38,7 +37,6 @@
   --badge-buy-bg:rgba(13,148,85,.16); --badge-buy-fg:#34d399;
   --badge-sell-bg:rgba(223,34,37,.16); --badge-sell-fg:#ff6568;
   --badge-neutral-bg:#1f2023; --badge-neutral-fg:#a1a1aa;
-  --json-key:#7aa5ff; --json-str:#4ade80; --json-num:#fbbf24; --json-bool:#c4b5fd; --json-null:#8b8d96;
 }
 *{box-sizing:border-box; margin:0; padding:0;}
 
@@ -103,6 +101,7 @@ textarea:focus-visible{box-shadow:inset 0 0 0 1px var(--primary);}
   border-top:1px solid var(--border); background:var(--input-bg); padding:8px;
 }
 .toolbar-left{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+.toolbar-actions{display:flex; align-items:center; gap:8px; margin-left:auto;}
 select,.btn{
   height:32px; font-family:inherit; font-size:13px; border:1px solid var(--border);
   background:var(--card); color:var(--foreground); padding:0 10px; cursor:pointer;
@@ -110,6 +109,9 @@ select,.btn{
 select:focus-visible,.btn:focus-visible,textarea:focus-visible,.tab:focus-visible{outline:2px solid var(--primary); outline-offset:1px;}
 .btn-primary{background:var(--primary); color:var(--primary-foreground); border-color:var(--primary); font-weight:500; padding:0 16px;}
 .btn-primary:hover{filter:brightness(1.08);}
+.btn-clear{display:inline-flex; align-items:center; justify-content:center; gap:6px; background:transparent; border-color:transparent; color:var(--muted-foreground); transition:background .15s,color .15s,border-color .15s;}
+.btn-clear svg{width:14px; height:14px;}
+.btn-clear:hover:not(:disabled){background:var(--muted); border-color:var(--border); color:var(--foreground);}
 .btn:disabled{opacity:.5; cursor:not-allowed;}
 .hint{font-size:12px; color:var(--muted-foreground);}
 .error{font-size:13px; color:var(--destructive);}
@@ -186,10 +188,10 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .date-range input[type="date"]:focus-visible{outline:none;}
 
 /* table */
-/* results area: table/json on the left, collapsible filter sidebar on the right.
+/* results area: table on the left, collapsible filter sidebar on the right.
    The area only shows while one of its views is active. */
 .table-area{display:none; align-items:stretch; gap:8px;}
-.table-area:has(.table-wrap.active), .table-area:has(.json-wrap.active){display:flex;}
+.table-area:has(.table-wrap.active){display:flex;}
 /* the active view stretches to at least the Columns sidebar's height, so a
    near-empty table never leaves the sidebar hanging below it */
 .table-area .table-main{flex:1 1 auto; min-width:0; display:flex; flex-direction:column;}
@@ -387,13 +389,6 @@ tbody tr.pos-detail:hover{background:transparent;}
 .pos-hist-sum{color:var(--muted-foreground); font-size:12px; margin-top:9px;}
 .pos-hist-sum b{color:var(--foreground); font-weight:500;}
 
-/* json view */
-.json-wrap{display:none; border:1px solid var(--border); background:var(--card); max-height:70vh; overflow:auto;}
-.json-wrap.active{display:block;}
-.json-wrap pre{font-family:'Geist Mono',ui-monospace,monospace; font-size:12px; line-height:1.55; padding:16px; white-space:pre;}
-.jk{color:var(--json-key);} .js{color:var(--json-str);} .jn{color:var(--json-num);} .jb{color:var(--json-bool);} .jz{color:var(--json-null);}
-.json-note{font-size:12px; color:var(--muted-foreground); padding:8px 16px; border-bottom:1px solid var(--border); background:var(--muted);}
-
 .load-more-row{display:none; justify-content:center; padding:12px;}
 .load-more-row.active{display:flex;}
 .empty{display:none; border:1px dashed var(--border); padding:40px; text-align:center; color:var(--muted-foreground); font-size:13px;}
@@ -541,7 +536,13 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
             <button type="button" class="seg-btn" data-v="" title="Complete history">All</button>
           </div>
         </div>
-        <button class="btn btn-primary" id="submitBtn">Check activity</button>
+        <div class="toolbar-actions">
+          <button type="button" class="btn btn-clear" id="clearAddressesBtn" title="Clear address field" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
+            Clear
+          </button>
+          <button type="button" class="btn btn-primary" id="submitBtn">Check activity</button>
+        </div>
       </div>
     </div>
 
@@ -576,7 +577,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <div class="tabs" role="tablist">
           <button class="tab on" id="tabTable" role="tab">Activity</button>
           <button class="tab" id="tabPositions" role="tab">Active Position</button>
-          <button class="tab" id="tabJson" role="tab">Json</button>
         </div>
         <span class="flex-spacer"></span>
         <button class="btn" id="snapBtn" title="Copy a screenshot of the current results table to the clipboard">Snapshot</button>
@@ -669,11 +669,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <tbody id="tableBody"></tbody>
       </table>
       <div class="load-more-row" id="loadMoreRow"><button class="btn" id="loadMoreBtn">Show more rows</button></div>
-    </div>
-
-    <div class="json-wrap" id="jsonWrap">
-      <div class="json-note" id="jsonNote"></div>
-      <pre id="jsonPre"></pre>
     </div>
 
     <div class="table-wrap pos-wrap" id="posWrap">
@@ -871,6 +866,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     button.title = label;
     input.placeholder = savedAddressText || "0x...";
     input.title = savedAddressText && !input.value ? "Press Tab or double-click to fill saved addresses" : "";
+    $("clearAddressesBtn").disabled = !input.value;
     note.textContent = message;
     note.hidden = !note.textContent;
   }
@@ -896,6 +892,15 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     clearBookmarkFeedback();
     $("addrInput").removeAttribute("aria-invalid");
     renderSavedAddresses();
+  });
+  $("clearAddressesBtn").addEventListener("click", () => {
+    const input = $("addrInput");
+    input.value = "";
+    input.removeAttribute("aria-invalid");
+    clearBookmarkFeedback();
+    $("errorBox").textContent = "";
+    renderSavedAddresses();
+    input.focus();
   });
   function fillSavedAddresses(){
     const input = $("addrInput");
@@ -1282,7 +1287,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     fetching = true;
     $("submitBtn").disabled = true;
     $("progressBox").classList.add("active");
-    ["summaryBox","resultsBar","tableWrap","jsonWrap","posWrap","emptyBox","walletsBox"].forEach(id=>$(id).classList.remove("active"));
+    ["summaryBox","resultsBar","tableWrap","posWrap","emptyBox","walletsBox"].forEach(id=>$(id).classList.remove("active"));
     allRecords = []; pagesFetched = 0;
     currentWallets = valid.slice();
     renderWalletTags();
@@ -1525,8 +1530,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("summaryBox").classList.add("active");
     $("resultsBar").classList.add("active");
     // keep whichever view the user is on; default to the table
-    if($("tabJson").classList.contains("on")) showJson();
-    else if($("tabPositions").classList.contains("on")) showPositions();
+    if($("tabPositions").classList.contains("on")) showPositions();
     else showTable();
   }
 
@@ -1832,8 +1836,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
 
   function setView(tab, wrap){
-    ["tabTable","tabPositions","tabJson"].forEach(id => $(id).classList.toggle("on", id === tab));
-    ["tableWrap","posWrap","jsonWrap"].forEach(id => $(id).classList.toggle("active", id === wrap));
+    ["tabTable","tabPositions"].forEach(id => $(id).classList.toggle("on", id === tab));
+    ["tableWrap","posWrap"].forEach(id => $(id).classList.toggle("active", id === wrap));
     // the results bar and the Columns panel both follow the active view
     $("resultsBar").classList.toggle("pos-mode", tab === "tabPositions");
     buildColsList();
@@ -1900,7 +1904,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let posStatusFilter = new Set(); // no selected status means all positions in the search
   let posRendered = []; // the rows currently in the DOM, for tooltip lookups
   const POS_MAX_PAGES = 4;   // 4 × 500 = 2,000 positions per wallet, surfaced in the note when hit
-  const POS_VIEW_CAP = 1000; // DOM safety, like JSON_VIEW_CAP — the CSV still exports everything
+  const POS_VIEW_CAP = 1000; // DOM safety — the CSV still exports everything
   const POS_CLOSED_MAX_PAGES = 40; // closed endpoint caps each page at 50, not 500
   let positionGroupCache = null;
   function positionGroupKey(p){
@@ -2788,29 +2792,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       }).join(",")).join("\n");
   }
 
-  // pretty JSON with syntax highlighting (capped for DOM safety)
-  const JSON_VIEW_CAP = 1000;
-  function highlightJson(str){
-    return esc(str).replace(
-      /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false)\b|\bnull\b|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g,
-      (m, str_, colon, bool) => {
-        if(str_) return colon ? '<span class="jk">'+str_+'</span>'+colon : '<span class="js">'+str_+'</span>';
-        if(bool) return '<span class="jb">'+bool+'</span>';
-        if(m === "null") return '<span class="jz">null</span>';
-        return '<span class="jn">'+m+'</span>';
-      });
-  }
-  function showJson(){
-    setView("tabJson", "jsonWrap");
-    $("dlBtn").title = "Export the current view as JSON";
-    const slice = filteredRecords.slice(0, JSON_VIEW_CAP);
-    $("jsonNote").textContent = filteredRecords.length > JSON_VIEW_CAP
-      ? "Showing first " + JSON_VIEW_CAP.toLocaleString() + " of " + filteredRecords.length.toLocaleString() + " records — use Download JSON for the full set."
-      : filteredRecords.length.toLocaleString() + " records, pretty-printed.";
-    $("jsonPre").innerHTML = highlightJson(JSON.stringify(slice, null, 2));
-    $("jsonWrap").classList.add("active");
-  }
-
   // ---------- downloads ----------
   function download(name, mime, content){
     const blob = new Blob([content], {type:mime});
@@ -3188,7 +3169,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   $("addrInput").addEventListener("keydown", e => { if(e.key==="Enter" && (e.metaKey||e.ctrlKey)) run(); });
   $("tabTable").addEventListener("click", showTable);
   $("tabPositions").addEventListener("click", showPositions);
-  $("tabJson").addEventListener("click", showJson);
   $("loadMoreBtn").addEventListener("click", ()=>renderTableChunk(false));
   function refreshResults(){
     if(!allRecords.length){ renderPositions(); return; }
@@ -3197,7 +3177,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     loadFeesFor(filteredRecords); // async; resolves the Fees (est.) total
     $("emptyBox").classList.toggle("active", !filteredRecords.length);
     if($("tabPositions").classList.contains("on")) renderPositions();
-    else if($("tabJson").classList.contains("on")) showJson(); else renderTableChunk(true);
+    else renderTableChunk(true);
   }
 
   // targeted server-side type query, merged with dedup — only when the feed was
@@ -3295,7 +3275,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }));
   $("rowsSel").addEventListener("change", ()=>{
     pageSize = Number($("rowsSel").value) || 100;
-    if(allRecords.length && !$("tabJson").classList.contains("on")) renderTableChunk(true);
+    if(allRecords.length && $("tabTable").classList.contains("on")) renderTableChunk(true);
   });
   $("thTime").addEventListener("click", ()=>{
     sortDir = sortDir === "desc" ? "asc" : "desc";
@@ -3628,7 +3608,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let snapBusy = false;
   $("snapBtn").addEventListener("click", async ()=>{
     if(snapBusy) return;
-    const wrap = ["tableWrap","posWrap","jsonWrap"].map(id => $(id)).find(el => el.classList.contains("active"));
+    const wrap = ["tableWrap","posWrap"].map(id => $(id)).find(el => el.classList.contains("active"));
     if(!wrap){ return; }
     const btn = $("snapBtn");
     const restore = label => { btn.textContent = label; setTimeout(()=>{ btn.textContent = "Snapshot"; }, 1600); };
@@ -3679,9 +3659,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   });
 
   $("dlBtn").addEventListener("click", async ()=>{
-    if($("tabJson").classList.contains("on"))
-      download("polymarket-activity.json","application/json",JSON.stringify(filteredRecords,null,2));
-    else if($("tabPositions").classList.contains("on")){
+    if($("tabPositions").classList.contains("on")){
       const rows = visiblePositions(), myRun = posRunSeq;
       $("dlBtn").disabled = true;
       try{
