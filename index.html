@@ -210,8 +210,9 @@ input[type="search"]:focus-visible{outline:2px solid var(--primary); outline-off
 .side-tab .dot{display:none; width:6px; height:6px; border-radius:50%; background:var(--primary);}
 .side-tab.has-hidden .dot{display:block;}
 
-.table-wrap{display:none; border:1px solid var(--border); overflow-x:auto;}
+.table-wrap{display:none; min-height:320px; border:1px solid var(--border); overflow-x:auto;}
 .table-wrap.active{display:block;}
+@media(max-width:640px){.table-wrap{min-height:260px;}}
 /* positions view: the results bar swaps to position-appropriate controls */
 .results-bar.pos-mode #typeSel,
 .results-bar.pos-mode #sideSel,
