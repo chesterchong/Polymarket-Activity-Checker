@@ -121,19 +121,16 @@ select:focus-visible,.btn:focus-visible,.tab:focus-visible{outline:2px solid var
 @keyframes spin{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion:reduce){.spinner{animation:none;}}
 
-/* summary: hero row for the headline numbers, compact grid for the rest */
+/* summary: the four headline numbers */
 .summary{display:none; border:1px solid var(--border); background:var(--card); overflow:hidden;}
 .summary.active{display:block;}
-.sum-hero{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); border-bottom:1px solid var(--border);}
+.sum-hero{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
 .sum-hero .stat{padding:18px 20px 16px; min-width:0;}
 .sum-hero .value{font-size:clamp(18px, 2.4vw, 26px); font-weight:650; letter-spacing:-.02em; margin-top:4px; overflow:hidden; text-overflow:ellipsis;}
-.sum-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr));}
-.sum-grid .stat{padding:12px 20px 14px;}
-.sum-grid .value{font-size:15px; font-weight:600; margin-top:3px;}
 .stat{position:relative;}
 /* hairline separators that work across wrapped grid rows */
 .stat::before{content:""; position:absolute; left:0; top:14%; height:72%; width:1px; background:var(--border);}
-.sum-hero .stat:first-child::before, .sum-grid .stat:first-child::before{display:none;}
+.sum-hero .stat:first-child::before{display:none;}
 .stat .label{font-size:10px; font-weight:500; text-transform:uppercase; letter-spacing:.09em; color:var(--muted-foreground); white-space:nowrap;}
 .stat .value{font-variant-numeric:tabular-nums;}
 .stat .value.pos{color:var(--success);}
@@ -150,12 +147,16 @@ select:focus-visible,.btn:focus-visible,.tab:focus-visible{outline:2px solid var
 .flex-spacer{flex:1 1 0; min-width:0;}
 .tabs{display:inline-flex; border:1px solid var(--border); border-radius:999px; overflow:hidden; background:var(--background);}
 .tab{
+  display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
   height:32px; padding:0 16px; font-size:13px; font-family:inherit; border:none; cursor:pointer;
   background:transparent; color:var(--muted-foreground);
 }
 .tab + .tab{border-left:1px solid var(--border);}
 .tab:hover{color:var(--foreground);}
 .tab.on{background:var(--primary); color:var(--primary-foreground);}
+.tab-count{display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; padding:0 5px; border-radius:999px; background:var(--muted); color:var(--muted-foreground); font-size:10px; font-weight:500; font-variant-numeric:tabular-nums; line-height:1;}
+.tab.on .tab-count{background:rgba(255,255,255,.18); color:inherit;}
+@media(max-width:640px){.tab{padding:0 10px; font-size:12px;}}
 /* pill selects with a custom chevron; wells sit slightly darker than the card */
 .results-bar select{
   appearance:none; -webkit-appearance:none;
@@ -493,8 +494,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 <link rel="preload" as="image" href="assets/winter-window.jpg">
 <script defer src="assets/winter.js"></script>
 <link rel="stylesheet" href="assets/date-range.css?v=3">
-<link rel="stylesheet" href="assets/values-panel.css?v=5">
-<link rel="stylesheet" href="assets/grid-values.css?v=5">
+<link rel="stylesheet" href="assets/values-panel.css?v=20e5cf6c7d51">
+<link rel="stylesheet" href="assets/grid-values.css?v=d3ec55680f3d">
 </head>
 <body>
 <div class="winter-scene" aria-hidden="true">
@@ -565,15 +566,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
         <div class="stat" title="Current value of open positions (from Polymarket's value API) — unaffected by the filters below"><div class="label">Portfolio value</div><div class="value" id="stPortfolio">–</div></div>
         <div class="stat" title="Cash in the wallet (USDC + PUSD read on-chain) — funds not currently in positions"><div class="label">Wallet balance</div><div class="value" id="stBalance">–</div></div>
       </div>
-      <div class="sum-grid">
-        <div class="stat"><div class="label">Records</div><div class="value" id="stRecords">–</div></div>
-        <div class="stat"><div class="label">Deposits</div><div class="value pos" id="stDeposits">–</div></div>
-        <div class="stat"><div class="label">Withdrawals</div><div class="value neg" id="stWithdrawals">–</div></div>
-        <div class="stat" title="Estimated taker fees on the trades in view (makers pay none)"><div class="label">Fees (est.)</div><div class="value" id="stFees">–</div></div>
-        <div class="stat" title="Sum of TAKER_REBATE records in view"><div class="label">Taker rebates</div><div class="value" id="stTakerRebates">–</div></div>
-        <div class="stat"><div class="label">Combos</div><div class="value" id="stCombos">–</div></div>
-        <div class="stat"><div class="label">Pages fetched</div><div class="value" id="stPages">–</div></div>
-      </div>
     </div>
 
     <div class="wallets-row">
@@ -584,8 +576,8 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     <div class="results-bar" id="resultsBar">
       <div class="rb-row">
         <div class="tabs" role="tablist">
-          <button class="tab on" id="tabTable" role="tab">Activity</button>
-          <button class="tab" id="tabPositions" role="tab">Active Position</button>
+          <button class="tab on" id="tabTable" role="tab" aria-label="Activity" aria-description="0 matching records">Activity <span class="tab-count" id="activityTabCount" aria-hidden="true">0</span></button>
+          <button class="tab" id="tabPositions" role="tab" aria-label="Active Position" aria-description="0 matching positions">Active Position <span class="tab-count" id="positionTabCount" aria-hidden="true">0</span></button>
         </div>
         <span class="flex-spacer"></span>
         <button class="btn" id="snapBtn" title="Copy a screenshot of the current results table to the clipboard">Snapshot</button>
@@ -735,7 +727,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
 <script src="assets/date-range.js?v=2"></script>
 <script src="assets/values-math.js"></script>
 <script src="assets/values-data.js"></script>
-<script src="assets/values-panel.js?v=5"></script>
+<script src="assets/values-panel.js?v=458d3d87dc89"></script>
 <script>
 (function(){
   "use strict";
@@ -761,7 +753,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   let filteredRecords = [];
   let searchByTx = false;
   let renderedCount = 0;
-  let pagesFetched = 0;
   let fetching = false;
   let valuePanels = null;
   let sortDir = "desc";   // Time column sort direction
@@ -1031,7 +1022,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       for(let pi = 0; pi < pages.length; pi++){
         const rows = await pages[pi];
         if(rows && rows.__err){ failed = rows.__err; break; }
-        pagesFetched++; totalPages++;
+        totalPages++;
         if(Array.isArray(rows)){
           for(const r of rows){
             const k = (r.transactionHash||"") + ":" + r.type + ":" + (r.asset||"") + ":" + (r.timestamp||0) + ":" + (r.size||0) + ":" + (r.price||0);
@@ -1339,7 +1330,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     $("submitBtn").disabled = true;
     $("progressBox").classList.add("active");
     ["summaryBox","resultsBar","tableWrap","posWrap","emptyBox","walletsBox"].forEach(id=>$(id).classList.remove("active"));
-    allRecords = []; pagesFetched = 0;
+    allRecords = []; filteredRecords = [];
     currentWallets = valid.slice();
     renderWalletTags();
     // positions belong to the previous search — invalidate (and stale-guard any
@@ -1349,6 +1340,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     posRunSeq++; allPositions = []; posLoaded = false; posLoading = false;
     posError = null; posTruncated = false; posFailedWallets = []; posRenderKey = null;
     positionGroupCache = null; liveActivityCheckedAt = Math.floor(Date.now()/1000); nextHistoryRefreshAt = 0;
+    refreshValues();
     liveActive = false; livePositionError = "";
     resetPriceFeed();
     if($("tabPositions").classList.contains("on")) loadPositions();
@@ -1543,25 +1535,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     // Polymarket trading volume = sum of TRADE sizes (matches leaderboard vol),
     // not usdcSize across all activity types (deposits/rewards/redeems/etc.)
     const vol = rows.reduce((s,r)=>s+(r.type==="TRADE" ? Number(r.size)||0 : 0),0);
-    const combos = rows.filter(r=>r.isCombo === true).length;
-    const dep = rows.reduce((s,r)=>s+(r.type==="DEPOSIT" ? Number(r.usdcSize)||0 : 0),0);
-    const wd  = rows.reduce((s,r)=>s+(r.type==="WITHDRAWAL" ? Number(r.usdcSize)||0 : 0),0);
-    $("stDeposits").textContent = "$" + fmtUsd(dep);
-    $("stWithdrawals").textContent = "$" + fmtUsd(wd);
-    let feeSum = 0, feePending = false, feePartial = false;
-    for(const r of rows){
-      const f = computeFeeFor(r);
-      if(f === undefined){ if(feeUnavailable(r)) feePartial = true; else feePending = true; }
-      else if(f) feeSum += f;
-    }
-    $("stFees").textContent = "$" + fmtUsd(feeSum) + (feePartial ? " (partial)" : feePending ? " …" : "");
-    const rebates = rows.reduce((s,r)=>s+(r.type==="TAKER_REBATE" ? Number(r.usdcSize)||0 : 0),0);
-    $("stTakerRebates").textContent = "$" + fmtUsd(rebates);
-    $("stCombos").textContent = combos.toLocaleString();
-    $("stRecords").textContent = rows.length.toLocaleString()
-      + (rows.length !== allRecords.length ? " / " + allRecords.length.toLocaleString() : "");
     $("stVolume").textContent = "$" + fmtUsd(vol);
-    $("stPages").textContent = pagesFetched.toLocaleString();
     refreshValues();
   }
 
@@ -1569,7 +1543,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     positionGroupCache = null; posRenderKey = null;
     applySearch();
     renderSummary();
-    loadFeesFor(filteredRecords); // async; resolves the Fees (est.) total
+    loadFeesFor(filteredRecords); // async; resolves table and Values fee estimates
 
     if(!allRecords.length){
       $("summaryBox").classList.add("active");
@@ -1871,7 +1845,6 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       chunk.forEach(id => { if(!feeCache.has(id)) feeCache.set(id, {unavailable:true}); });
       refreshFeeCells();
       refreshMarketTimeCells();
-      renderSummary(); // keep the Fees (est.) stat converging as schedules arrive
     }
     need.forEach(id => feeInflight.delete(id));
   }
@@ -2383,7 +2356,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
       + posCols.order.map(i => cells[i]).join("") + "</tr>";
   }
   function renderPositions(){
-    if(!$("posWrap").classList.contains("active")) return;
+    if(!$("posWrap").classList.contains("active")){ refreshValues(); return; }
     const q = $("searchBox").value.trim();
     // progressive feed chunks re-dispatch here constantly — skip identical re-renders
     const key = [posRunSeq, posLoading, posLoaded, posError, allPositions.length, allRecords.length,
@@ -3280,7 +3253,7 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
     if(!allRecords.length){ renderPositions(); return; }
     applySearch();
     renderSummary();
-    loadFeesFor(filteredRecords); // async; resolves the Fees (est.) total
+    loadFeesFor(filteredRecords); // async; resolves table and Values fee estimates
     $("emptyBox").classList.toggle("active", !filteredRecords.length);
     if($("tabPositions").classList.contains("on")) renderPositions();
     else renderTableChunk(true);
@@ -3641,12 +3614,21 @@ button.badge-btn:hover{box-shadow:0 0 0 1px var(--primary) inset;}
   }
   function refreshValues(){
     if(!valuePanels) return;
+    const positionRows = visiblePositions();
+    for(const [tab, badge, count, noun] of [
+      ["tabTable", "activityTabCount", filteredRecords.length, "record"],
+      ["tabPositions", "positionTabCount", positionRows.length, "position"]
+    ]){
+      const text = count.toLocaleString();
+      $(badge).textContent = text;
+      $(tab).setAttribute("aria-description", text + " matching " + noun + (count === 1 ? "" : "s"));
+    }
     const view = $("tabPositions").classList.contains("on") ? "positions" : "activity";
     $("activityValues").hidden = view !== "activity";
     $("positionValues").hidden = view !== "positions";
     const positions = view === "positions";
     if(!$(positions ? "posWrap" : "tableWrap").classList.contains("active")) return;
-    const rows = positions ? visiblePositions() : filteredRecords;
+    const rows = positions ? positionRows : filteredRecords;
     const data = positions ? ValuesData.positions(rows, valuesHelpers) : ValuesData.activity(rows, valuesHelpers);
     const samples = new Map(rows.map((row, i) => [row, data[i]]));
     const config = valuePanels[view].getConfig();

@@ -26,10 +26,11 @@ function harness(options = {}) {
   const elements = new Map();
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
-      hidden: false, innerHTML: '', textContent: '', dataset: {}, children: [],
+      hidden: false, innerHTML: '', textContent: '', dataset: {}, children: [], attributes: {},
+      setAttribute(name, value) { this.attributes[name] = String(value); },
       classList: {
         contains: name => name === 'on' ? id === 'tabPositions' && view === 'positions'
-          : name === 'active' && id === (view === 'positions' ? 'posWrap' : 'tableWrap'),
+          : name === 'active' && options.activeWrap !== false && id === (view === 'positions' ? 'posWrap' : 'tableWrap'),
         toggle() {}
       },
       querySelectorAll: () => [],
@@ -78,6 +79,10 @@ function harness(options = {}) {
       get: () => markup,
       set: () => assert.fail(`Values refresh rewrote ${id}`)
     });
+  }
+  for (const [id, label] of [['tabTable', 'Activity'], ['tabPositions', 'Active Position']]) {
+    element(id).textContent = label;
+    element(id).setAttribute('aria-label', label);
   }
   return {context, elements, element, configuration};
 }
@@ -201,4 +206,56 @@ test('a truly empty completed search has a zero sum and count but no average', (
   assert.match(count.html, /grid-number">0</);
   const average = context.gridAggregateCell('activity', [], 'usdcSize', 'avg', new Map());
   assert.match(average.html, /grid-number">—</);
+});
+
+for (const view of ['activity', 'positions']) {
+  test(`${view} refresh counts all filtered records and positions before display caps`, () => {
+    const rows = Array.from({length: 1512}, () => ({type: 'TRADE', usdcSize: 1, fee: 0}));
+    const positions = Array.from({length: 1205}, () => ({cashPnl: 2, fee: 0}));
+    const {context, element} = harness({view, rows, cap: 2});
+    context.visiblePositions = () => positions;
+    context.posRendered = positions.slice(0, 1000);
+    context.refreshValues();
+    assert.equal(element('activityTabCount').textContent, '1,512');
+    assert.equal(element('positionTabCount').textContent, '1,205');
+    assert.equal(element('tabTable').attributes['aria-description'], '1,512 matching records');
+    assert.equal(element('tabPositions').attributes['aria-description'], '1,205 matching positions');
+    assert.equal(element('tabTable').attributes['aria-label'], 'Activity');
+    assert.equal(element('tabPositions').attributes['aria-label'], 'Active Position');
+    assert.equal(element('tabTable').textContent, 'Activity');
+    assert.equal(element('tabPositions').textContent, 'Active Position');
+  });
+}
+
+test('filter and live position changes refresh both counts with correct singular descriptions', () => {
+  const {context, element} = harness({rows: [{type: 'TRADE', usdcSize: 2, fee: 0}]});
+  let positions = [{cashPnl: 3}, {cashPnl: 4}, {cashPnl: 5}];
+  context.visiblePositions = () => positions;
+  context.refreshValues();
+  assert.equal(element('activityTabCount').textContent, '1');
+  assert.equal(element('positionTabCount').textContent, '3');
+  assert.equal(element('tabTable').attributes['aria-description'], '1 matching record');
+  assert.equal(element('tabPositions').attributes['aria-description'], '3 matching positions');
+  context.filteredRecords = [{type: 'TRADE', usdcSize: 1}, {type: 'TRADE', usdcSize: 2}];
+  positions = [{cashPnl: 6}];
+  context.refreshValues();
+  assert.equal(element('activityTabCount').textContent, '2');
+  assert.equal(element('positionTabCount').textContent, '1');
+  assert.equal(element('tabTable').attributes['aria-description'], '2 matching records');
+  assert.equal(element('tabPositions').attributes['aria-description'], '1 matching position');
+});
+
+test('empty results clear both count badges even before a table wrapper becomes active', () => {
+  const {context, element} = harness({activeWrap: false});
+  element('activityTabCount').textContent = '99';
+  element('positionTabCount').textContent = '5';
+  element('activityTotals').innerHTML = 'Previous total';
+  element('positionTotals').innerHTML = 'Other total';
+  context.refreshValues();
+  assert.equal(element('activityTabCount').textContent, '0');
+  assert.equal(element('positionTabCount').textContent, '0');
+  assert.equal(element('tabTable').attributes['aria-description'], '0 matching records');
+  assert.equal(element('tabPositions').attributes['aria-description'], '0 matching positions');
+  assert.equal(element('activityTotals').innerHTML, 'Previous total');
+  assert.equal(element('positionTotals').innerHTML, 'Other total');
 });
