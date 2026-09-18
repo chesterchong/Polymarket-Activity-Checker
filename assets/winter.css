@@ -7,6 +7,7 @@
   --muted-foreground:#53657a;
   --border:rgba(78,105,137,.2);
   --input-bg:rgba(245,249,255,.38);
+  --input-focus-bg:rgba(218,232,249,.8);
   --winter-base:#d4e0eb;
   --winter-wash:rgba(219,233,245,.36);
   --winter-shadow:0 12px 40px rgba(13,31,50,.1),inset 0 1px 0 rgba(255,255,255,.5);
@@ -19,6 +20,7 @@
   --muted-foreground:#a3b3c8;
   --border:rgba(190,215,242,.14);
   --input-bg:rgba(13,25,40,.36);
+  --input-focus-bg:rgba(38,56,77,.72);
   --winter-base:#0d1826;
   --winter-wash:rgba(5,14,26,.36);
   --winter-shadow:0 12px 40px rgba(0,8,20,.2),inset 0 1px 0 rgba(219,235,255,.06);
@@ -44,7 +46,6 @@ body{background:var(--winter-base); isolation:isolate;}
 .side-panel{border-radius:10px 0 0 10px;}
 .icon-btn{border-radius:8px; background:var(--card); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);}
 #tooltip{background:var(--winter-base); border-radius:8px;}
-footer{align-self:flex-start; background:var(--card); padding:6px 10px; border:1px solid var(--border); border-radius:8px; font-size:11px;}
 @media(max-width:640px){
   .winter-street{background-position:53% center;}
   .card,.summary,.results-bar,.side-panel,.side-tabs{-webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);}
